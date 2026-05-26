@@ -9,6 +9,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import time
 import traceback
 import urllib.parse
 import threading
@@ -19,6 +20,21 @@ PORT = 8765
 ROOT = os.path.dirname(os.path.abspath(__file__))
 PYTHON = r"C:\Users\28312\.workbuddy\binaries\python\versions\3.14.3\python.exe"
 NODE = r"C:\Users\28312\.workbuddy\binaries\node\versions\22.12.0\node.exe"
+
+# Cache for init data (Category B optimization)
+_init_cache = None
+_init_cache_time = 0
+CACHE_TTL = 5
+
+# Reusable DB connection (Category B optimization)
+_server_db = None
+
+def get_server_db():
+    global _server_db
+    if _server_db is None:
+        _server_db = sqlite3.connect(os.path.join(ROOT, "data", "stock.db"))
+        _server_db.row_factory = sqlite3.Row
+    return _server_db
 
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
@@ -71,6 +87,8 @@ def search_stocks(keyword):
     if not stocks or not keyword:
         return []
     kw = keyword.lower().strip()
+    # Category D: Normalize full-width characters for Chinese name matching
+    kw = kw.replace('\u3000', ' ').replace('\uff41', 'a').replace('\uff42', 'b')
     results = []
     for s in stocks:
         score = 0
@@ -83,10 +101,12 @@ def search_stocks(keyword):
             score += 60
         if name.find(kw) >= 0:
             score += 80 - name.find(kw) * 0.5
-        if py.startswith(kw):
-            score += 50
-        elif py.find(kw) > 0:
-            score += 30
+        if kw.isalpha() and py.find(kw) >= 0:
+            # Also try partial pinyin matching for multi-character queries
+            if py.startswith(kw):
+                score += 50
+            else:
+                score += 30
         if score == 0 and len(kw) > 1:
             match_all = all(ch in py for ch in kw if ch.isalpha())
             if match_all:
@@ -126,8 +146,18 @@ def run_script(script_name, timeout=60):
 
 
 def _build_init_data() -> dict:
-    """Build full init data dict from SQLite (same as /api/v2/init)."""
+    """Build full init data dict from SQLite (same as /api/v2/init).
+    
+    Category B: Implements response caching with TTL to avoid
+    redundant DB queries within CACHE_TTL seconds.
+    """
+    global _init_cache, _init_cache_time
     import json
+
+    now = time.time()
+    if _init_cache and (now - _init_cache_time) < CACHE_TTL:
+        return _init_cache
+
     init_data = {"account": "51312640", "broker": "广发证券", "generated": datetime.now().strftime("%Y-%m-%d %H:%M")}
     try:
         init_data["watchlist"] = [dict(r) for r in get_watchlist()] if DB_AVAILABLE else []
@@ -143,12 +173,11 @@ def _build_init_data() -> dict:
         init_data["positions"] = {"current_positions": {}, "closed_positions": {}, "all_trades": []}
     try:
         if DB_AVAILABLE:
+            db = get_server_db()
             kd = {}
-            db = sqlite3.connect(os.path.join(ROOT, "data", "stock.db"))
             for r in db.execute("SELECT code,date,open,close,high,low FROM kline_daily ORDER BY code,date DESC").fetchall():
                 kd.setdefault(r[0], []).append([r[1], r[2], r[3], r[4], r[5]])
             init_data["kline_daily"] = kd
-            db.close()
         else:
             init_data["kline_daily"] = {}
     except Exception:
@@ -159,15 +188,13 @@ def _build_init_data() -> dict:
         init_data["daily_predictions"] = []
     try:
         if DB_AVAILABLE:
-            db = sqlite3.connect(os.path.join(ROOT, "data", "stock.db"))
-            db.row_factory = sqlite3.Row
+            db = get_server_db()
             news = [dict(r) for r in db.execute("SELECT id,date,code,title,summary,source,sentiment,major FROM news ORDER BY date DESC").fetchall()]
             for n in news:
                 n["major"] = bool(n["major"])
             init_data["news"] = news
             er = [json.loads(r["report_data"]) for r in db.execute("SELECT * FROM expert_reports ORDER BY date DESC").fetchall()]
             init_data["expert_reports"] = er
-            db.close()
         else:
             init_data["news"] = []
             init_data["expert_reports"] = []
@@ -185,17 +212,33 @@ def _build_init_data() -> dict:
     try:
         init_data["learning_params"] = {}
         if DB_AVAILABLE:
-            from db_helper import get_learning_params
-            for s in init_data.get("watchlist", []):
-                lp = get_learning_params(s["code"])
-                if lp:
-                    init_data["learning_params"][s["code"]] = lp
+            db = get_server_db()
+            codes = tuple(s["code"] for s in init_data.get("watchlist", []))
+            if codes:
+                for r in db.execute(
+                    f"SELECT * FROM learning_params WHERE code IN ({','.join('?' * len(codes))})",
+                    codes
+                ).fetchall():
+                    lp = {
+                        'signal_weights': json.loads(r['signal_weights']),
+                        'hourly_bias': json.loads(r['hourly_bias']),
+                        'seasonal_adj': json.loads(r['seasonal_adj']),
+                        'confidence_beta': json.loads(r['confidence_beta']),
+                        'learning_rate': r['learning_rate'], 'mw_beta': r['mw_beta'],
+                        'update_count': r['update_count'],
+                    }
+                    init_data["learning_params"][r["code"]] = lp
     except Exception:
         pass
     try:
         init_data["accuracy_stats"] = get_all_accuracy_stats() if DB_AVAILABLE else {}
     except Exception:
         init_data["accuracy_stats"] = {}
+
+    # Only cache if watchlist is non-empty (prevent caching incomplete data)
+    if init_data.get("watchlist"):
+        _init_cache = init_data
+        _init_cache_time = now
     return init_data
 
 
@@ -219,9 +262,10 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
         elif path == "/dbview":
             self._serve_db_viewer()
         elif path == "/api/watchlist":
+            """Return watchlist from SQLite (migrated from JSON)."""
             try:
-                wl = read_json("data/watchlist.json")
-                json_response(self, {"success": True, "data": wl})
+                wl = [dict(r) for r in get_watchlist()] if DB_AVAILABLE else []
+                json_response(self, {"success": True, "data": {"stocks": wl}})
             except Exception as e:
                 json_response(self, {"success": False, "error": str(e)}, 500)
         elif path == "/api/system-data":
@@ -255,43 +299,41 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
             except Exception as e:
                 json_response(self, {"success": False, "error": str(e)}, 500)
 
-        # V0.6: Batch kline endpoints (exact match, must come BEFORE startswith)
+        # K-line endpoints: single stock (?code=) and batch (?codes=)
+        # Category A fix: check ?code= before assuming batch request
         elif path == "/api/v2/kline/daily":
             q = urllib.parse.parse_qs(parsed.query)
-            codes = q.get("codes", [None])[0]
-            try:
-                data = get_all_kline_daily(codes.split(",") if codes else None) if DB_AVAILABLE else {}
-                json_response(self, {"success": True, "data": data})
-            except Exception as e:
-                json_response(self, {"success": False, "error": str(e)}, 500)
+            code = q.get("code", [None])[0]
+            if code:
+                try:
+                    data = get_kline_daily(code) if DB_AVAILABLE else []
+                    json_response(self, {"success": True, "data": data})
+                except Exception as e:
+                    json_response(self, {"success": False, "error": str(e)}, 500)
+            else:
+                codes = q.get("codes", [None])[0]
+                try:
+                    data = get_all_kline_daily(codes.split(",") if codes else None) if DB_AVAILABLE else {}
+                    json_response(self, {"success": True, "data": data})
+                except Exception as e:
+                    json_response(self, {"success": False, "error": str(e)}, 500)
 
         elif path == "/api/v2/kline/monthly":
             q = urllib.parse.parse_qs(parsed.query)
-            codes = q.get("codes", [None])[0]
-            try:
-                data = get_all_kline_monthly(codes.split(",") if codes else None) if DB_AVAILABLE else {}
-                json_response(self, {"success": True, "data": data})
-            except Exception as e:
-                json_response(self, {"success": False, "error": str(e)}, 500)
-
-        # Legacy: Single stock kline with ?code= query param (path.startswith)
-        elif path.startswith("/api/v2/kline/daily"):
-            q = urllib.parse.parse_qs(parsed.query)
-            code = q.get("code", [""])[0]
-            try:
-                data = get_kline_daily(code) if code else []
-                json_response(self, {"success": True, "data": data}) if DB_AVAILABLE else json_response(self, {"success": False}, 500)
-            except Exception as e:
-                json_response(self, {"success": False, "error": str(e)}, 500)
-
-        elif path.startswith("/api/v2/kline/monthly"):
-            q = urllib.parse.parse_qs(parsed.query)
-            code = q.get("code", [""])[0]
-            try:
-                data = get_kline_monthly(code) if code else []
-                json_response(self, {"success": True, "data": data}) if DB_AVAILABLE else json_response(self, {"success": False}, 500)
-            except Exception as e:
-                json_response(self, {"success": False, "error": str(e)}, 500)
+            code = q.get("code", [None])[0]
+            if code:
+                try:
+                    data = get_kline_monthly(code) if DB_AVAILABLE else []
+                    json_response(self, {"success": True, "data": data})
+                except Exception as e:
+                    json_response(self, {"success": False, "error": str(e)}, 500)
+            else:
+                codes = q.get("codes", [None])[0]
+                try:
+                    data = get_all_kline_monthly(codes.split(",") if codes else None) if DB_AVAILABLE else {}
+                    json_response(self, {"success": True, "data": data})
+                except Exception as e:
+                    json_response(self, {"success": False, "error": str(e)}, 500)
 
         # V0.6: Batch predictions (exact match, before startswith)
         elif path == "/api/v2/predictions/daily":
@@ -607,14 +649,12 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
                     json_response(self, {"success": False, "error": "code and name required"}, 400)
                     return
 
-                wl = read_json("data/watchlist.json")
-                existing = [s for s in wl["stocks"] if s["code"] == code]
-                if existing:
-                    json_response(self, {"success": False, "error": f"股票 {code} 已存在"}, 409)
-                    return
-
-                wl["stocks"].append({"code": code, "name": name, "market": market})
-                write_json("data/watchlist.json", wl)
+                if DB_AVAILABLE:
+                    wl_db = [dict(r) for r in get_watchlist()]
+                    if any(s["code"] == code for s in wl_db):
+                        json_response(self, {"success": False, "error": f"股票 {code} 已存在"}, 409)
+                        return
+                    add_watchlist(code, name, market)
 
                 # Initialize data for new stock — sync ALL modules
                 ok1, out1 = run_script("sync_all.py", 120)
@@ -622,7 +662,7 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
                 json_response(self, {
                     "success": ok1,
                     "message": f"已添加 {name}({code})，全模块数据同步完成" if ok1 else "添加失败",
-                    "watchlist": wl,
+                    "watchlist": [dict(r) for r in get_watchlist()] if DB_AVAILABLE else [],
                     "output": out1[-500:] if out1 else "",
                 })
 
@@ -632,13 +672,6 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
                     json_response(self, {"success": False, "error": "code required"}, 400)
                     return
 
-                wl = read_json("data/watchlist.json")
-                before = len(wl["stocks"])
-                wl["stocks"] = [s for s in wl["stocks"] if s["code"] != code]
-                after = len(wl["stocks"])
-
-                # Always clean up SQLite (including repair of partially-deleted stocks)
-                # Move this BEFORE the JSON check so it runs regardless
                 sql_cleaned = False
                 try:
                     from db_helper import remove_watchlist
@@ -656,16 +689,13 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
                 except Exception as e:
                     print(f"[cleanup] SQLite cleanup warning: {e}")
 
-                if before == after and not sql_cleaned:
+                if not sql_cleaned:
                     json_response(self, {"success": False, "error": f"股票 {code} 不存在"}, 404)
                     return
-
-                write_json("data/watchlist.json", wl)
 
                 json_response(self, {
                     "success": True,
                     "message": f"已移除 {code}，数据已更新",
-                    "watchlist": wl,
                 })
 
             # === TRIGGERS ===

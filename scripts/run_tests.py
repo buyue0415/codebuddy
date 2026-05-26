@@ -1,5 +1,5 @@
 """Comprehensive system test suite — executes all automatable test cases from 测试用例方案.md"""
-import urllib.request, json, time, os, sys
+import urllib.request, urllib.parse, json, time, os, sys
 
 BASE = "http://localhost:8765"
 PASS, FAIL, SKIP = 0, 0, 0
@@ -55,7 +55,7 @@ test("003a", "代码搜索返回结果", lambda: resp.get("success") and len(res
 test("003b", "代码搜索<500ms", lambda: ms < 500)
 if resp.get("data"): print(f"  [INFO] 搜索'600036': {resp['data'][0]['name']} ({len(resp['data'])} results, {ms}ms)")
 
-code, resp, ms = api("GET", "/api/search/stocks?q=招商银行")
+code, resp, ms = api("GET", "/api/search/stocks?q=" + urllib.parse.quote("招商银行"))
 test("003c", "名称搜索返回结果", lambda: resp.get("success") and any("招商" in d.get("name","") for d in resp.get("data",[])))
 print(f"  [INFO] 搜索'招商银行': {len(resp.get('data',[]))} results, {ms}ms")
 
