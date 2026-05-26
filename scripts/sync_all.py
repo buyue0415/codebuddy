@@ -10,11 +10,11 @@ V0.6 optimizations:
   - kline data normalized to newest-first order
   - Learning params loaded from DB (preserves self-learning progress)
 
-Execution flow (7 steps, aligned with specs/03-sync-engine.md):
+Execution flow (7 steps, SQLite-only, no legacy JSON):
   Step 1: Fetch news          Step 2: Parallel K-line fetch
   Step 3: Backfill predictions Step 4: Recalculate accuracy
-  Step 5: Generate predictions Step 6: Seasonal + monthly + quotes
-  Step 7: Write legacy JSON
+  Step 5: Self-learning (MWU) Step 6: Generate predictions
+  Step 7: Seasonal + monthly + quotes
 
 External data source: NeoData (via westock-data Node.js package)
 Target: SQLite stock.db (17 tables)
@@ -494,9 +494,99 @@ for stock in watchlist:
     print(f"  {stock['name']}({code}): dir_acc={dir_rate}% ({dir_correct}/{dir_total}), range_acc={range_rate}%")
 
 # =====================================================================
-# Step 5: Generate daily predictions
+# Step 5: Self-learning update (MWU + EG + Beta-Binomial + seasonal EMA)
+#   Migrated from daily_update.py Step 5; runs on past predictions
+#   with verified (dir_hit NOT NULL) actual data.
 # =====================================================================
-print("\n[Step 5] Generating predictions ...")
+print("[Step 5] Self-learning updates (MWU/EG/Beta-Binomial) ...")
+for stock in watchlist:
+    code = stock['code']
+    db = get_db()
+    lp_row = db.execute("SELECT * FROM learning_params WHERE code=?", [code]).fetchone()
+    db.close()
+    if not lp_row:
+        continue
+    import json
+    lp = {
+        'signal_weights': json.loads(lp_row['signal_weights']),
+        'hourly_bias': json.loads(lp_row['hourly_bias']),
+        'seasonal_adj': json.loads(lp_row['seasonal_adj']),
+        'confidence_beta': json.loads(lp_row['confidence_beta']),
+        'learning_rate': lp_row['learning_rate'],
+        'mw_beta': lp_row['mw_beta'],
+        'update_count': lp_row['update_count'],
+    }
+
+    db = get_db()
+    today_preds = db.execute(
+        "SELECT id, date, direction, high, low, prev_close, actual_open, actual_high, actual_low, actual_close, dir_hit, range_hit "
+        "FROM daily_predictions WHERE code=? AND dir_hit IS NOT NULL ORDER BY date DESC LIMIT 1",
+        [code]
+    ).fetchall()
+    db.close()
+
+    for pred in today_preds:
+        dir_hit = bool(pred['dir_hit'])
+        range_hit = bool(pred['range_hit'])
+        pred_direction = pred['direction']
+        prev_close = pred['prev_close']
+        actual_close = pred['actual_close']
+        n = lp['update_count']
+
+        # 1. MWU signal weights update
+        decay = 0.7
+        for signal_name in lp['signal_weights']:
+            sw = lp['signal_weights'][signal_name]
+            for period in BLOCKS:
+                old_w = sw.get(period, 1.0)
+                signal_correct = dir_hit if period == 'next_day' else False
+                if signal_correct:
+                    sw[period] = old_w * math.exp(1.0)
+                else:
+                    sw[period] = old_w * math.exp(-1.0)
+                sw[period] = sw[period] * decay + 1.0 * (1 - decay)
+
+            total_w = sum(sw.get(p, 1.0) for p in BLOCKS)
+            if total_w > 0:
+                for p in BLOCKS:
+                    sw[p] = sw.get(p, 1.0) / total_w * 5.0
+
+        # 2. EG bias update
+        eta = 0.01 * (0.995 ** n)
+        for period in lp['hourly_bias']:
+            old_bias = lp['hourly_bias'][period]
+            error = 1.0 if (dir_hit if period == 'next_day' else False) else -1.0
+            new_bias = old_bias + eta * error
+            lp['hourly_bias'][period] = max(-0.05, min(0.05, new_bias))
+
+        # 3. Beta-Binomial confidence
+        if pred_direction != 'neutral':
+            cb = lp['confidence_beta']
+            if dir_hit:
+                cb[pred_direction]['alpha'] = cb[pred_direction].get('alpha', 1) + 1
+            else:
+                cb[pred_direction]['beta'] = cb[pred_direction].get('beta', 1) + 1
+
+        # 4. Seasonal factor EMA
+        current_month_num = datetime.now().month
+        month_key = str(current_month_num)
+        if month_key in lp.get('seasonal_adj', {}):
+            daily_ret = ((actual_close - prev_close) / prev_close * 100) if prev_close > 0 else 0
+            old_factor = lp['seasonal_adj'][month_key]
+            lp['seasonal_adj'][month_key] = 0.2 * daily_ret + 0.8 * old_factor
+
+        lp['update_count'] = n + 1
+
+        try:
+            upsert_learning_params(code, lp)
+            print(f"  {stock['name']}({code}): self-learning updated (count={lp['update_count']})")
+        except Exception as e:
+            print(f"  DB write learning {code} failed: {e}")
+
+# =====================================================================
+# Step 6: Generate daily predictions
+# =====================================================================
+print("\n[Step 6] Generating daily predictions ...")
 
 # Clear today's old predictions before regenerating
 try:
@@ -545,7 +635,7 @@ for stock in watchlist:
           f"conf={pred['next_day']['confidence']:.0%}")
 
 # =====================================================================
-# Step 6: Seasonal + monthly kline (conditionally for new stocks)
+# Step 7: Seasonal + monthly kline (conditionally for new stocks)
 # =====================================================================
 DEFAULT_SEASONAL = [0.8, -2.5, 1.2, 0.5, -1.0, 2.3, 3.5, -1.8, 1.5, 2.8, -1.2, 3.0]
 
@@ -601,44 +691,5 @@ for stock in watchlist:
             })
         except Exception as e:
             print(f"  DB write quote {code} failed: {e}")
-
-# =====================================================================
-# Step 7: Write legacy system_data.json (for deprecated /api/system-data)
-# =====================================================================
-legacy = {
-    'generated':  TODAY,
-    'watchlist':  [dict(s) for s in watchlist],
-    'kline_daily': kline_results,
-    'daily_predictions': new_preds,
-    'seasonal':  {},
-    'kline':     {},
-    'quotes':    {},
-}
-for stock in watchlist:
-    code = stock['code']
-    db = get_db()
-    r = db.execute("SELECT factors FROM seasonal WHERE code=?", [code]).fetchone()
-    if r:
-        legacy['seasonal'][code] = json.loads(r[0])
-    rows = db.execute("SELECT date, open, high, low, close, volume, change_pct "
-                       "FROM kline_monthly WHERE code=? ORDER BY date DESC",
-                       [code]).fetchall()
-    if rows:
-        legacy['kline'][code] = [[r[0], r[1], r[2], r[3], r[4], r[5], r[6]] for r in rows]
-    r2 = db.execute("SELECT * FROM quotes WHERE code=?", [code]).fetchone()
-    if r2:
-        legacy['quotes'][code] = {
-            'price': r2['price'], 'change': r2['change'], 'open': r2['open'],
-            'high': r2['high'], 'low': r2['low'], 'pe': r2['pe'], 'pb': r2['pb'], 'dy': r2['dy'],
-        }
-    db.close()
-
-try:
-    with open(os.path.join(ROOT, 'data', 'system_data.json'), 'w',
-              encoding='utf-8') as f:
-        json.dump(legacy, f, ensure_ascii=False, indent=2)
-    print(f"\n[Step 7] system_data.json saved (legacy)")
-except Exception as e:
-    print(f"\n[Step 7] system_data.json write failed: {e}")
 
 print(f"\n[sync_all] Done. {len(watchlist)} stocks, {len(new_preds)} predictions.")

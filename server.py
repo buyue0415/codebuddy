@@ -225,8 +225,9 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
             except Exception as e:
                 json_response(self, {"success": False, "error": str(e)}, 500)
         elif path == "/api/system-data":
+            # 替换为 SQLite 全量数据（兼容旧版前端调用）
             try:
-                data = read_json("data/system_data.json")
+                data = _build_init_data()
                 json_response(self, {"success": True, "data": data})
             except Exception as e:
                 json_response(self, {"success": False, "error": str(e)}, 500)
@@ -547,14 +548,6 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
                     db.execute(f"DELETE FROM {tbl} WHERE code=?", [code])
                 db.commit(); db.close()
 
-                # Also clean up JSON files for consistency
-                wl = read_json("data/watchlist.json")
-                wl["stocks"] = [s for s in wl["stocks"] if s["code"] != code]
-                write_json("data/watchlist.json", wl)
-                sd = read_json("data/system_data.json")
-                sd["watchlist"] = wl["stocks"]
-                write_json("data/system_data.json", sd)
-
                 json_response(self, {"success": True, "message": f"已移除 {code}"})
             except Exception as e:
                 json_response(self, {"success": False, "error": str(e)}, 500)
@@ -598,15 +591,6 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
                         return
                     add_watchlist(code, name, market)
 
-                # Also update JSON files for legacy compat
-                wl_json = read_json("data/watchlist.json")
-                if not any(s["code"] == code for s in wl_json["stocks"]):
-                    wl_json["stocks"].append({"code": code, "name": name, "market": market})
-                    write_json("data/watchlist.json", wl_json)
-                sd = read_json("data/system_data.json")
-                sd["watchlist"] = wl_json["stocks"]
-                write_json("data/system_data.json", sd)
-
                 ok1, out1 = run_script("sync_all.py", 120)
                 json_response(self, {
                     "success": ok1,
@@ -631,11 +615,6 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
 
                 wl["stocks"].append({"code": code, "name": name, "market": market})
                 write_json("data/watchlist.json", wl)
-
-                # Also update system_data.json
-                sd = read_json("data/system_data.json")
-                sd["watchlist"] = wl["stocks"]
-                write_json("data/system_data.json", sd)
 
                 # Initialize data for new stock — sync ALL modules
                 ok1, out1 = run_script("sync_all.py", 120)
@@ -682,9 +661,6 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
                     return
 
                 write_json("data/watchlist.json", wl)
-                sd = read_json("data/system_data.json")
-                sd["watchlist"] = wl["stocks"]
-                write_json("data/system_data.json", sd)
 
                 json_response(self, {
                     "success": True,
@@ -703,7 +679,7 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
 
             elif path == "/api/trigger/update_statement":
                 ok, out = run_script("update_from_statement.py", 30)
-                ok2, out2 = run_script("reinject_data.py", 10)
+                ok2, out2 = run_script("reinject_from_db.py", 15)
                 json_response(self, {
                     "success": ok and ok2,
                     "output": out[-1000:] if out else "",
@@ -811,7 +787,7 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
                 f.write(file_data)
 
             ok, out = run_script("update_from_statement.py", 30)
-            ok2, out2 = run_script("reinject_data.py", 10)
+            ok2, out2 = run_script("reinject_from_db.py", 15)
             json_response(self, {
                 "success": ok and ok2,
                 "message": "对账单已更新，刷新页面查看" if ok else "解析失败",

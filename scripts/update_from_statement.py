@@ -1,9 +1,13 @@
-"""从广发证券对账单更新系统数据并注入HTML"""
+"""从广发证券对账单解析交易记录，写入 SQLite 持仓表"""
 import json, sys, os, shutil
 from collections import defaultdict
 import pandas as pd
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, 'scripts'))
+from db_helper import upsert_positions
+
 STMT_FILE = os.path.join(ROOT, '广发易淘金PC版-普通对账单结果查询.xlsx')
 
 df = pd.read_excel(STMT_FILE, header=0)
@@ -54,7 +58,7 @@ for t in trades:
     elif t['type'] == '股息入账':
         pos['dividends'].append({'date': t['date'], 'amount': t['settlement'], 'price': t['price']})
 
-# --- Step 3: Build broker_statement.json ---
+# --- Step 3: Build output structures ---
 current = {}
 for code, pos in positions.items():
     if pos['qty'] <= 0: continue
@@ -93,19 +97,25 @@ for t in trades:
             'settlement': round(t['settlement'], 2),
         })
 
-broker = {
-    'account': '51312640', 'broker': '广发证券',
-    'current_positions': current, 'closed_positions': closed, 'all_trades': all_trades_out,
-}
-
-# Save broker_statement.json
+# Save broker_statement.json (canonical output)
 stmt_path = os.path.join(ROOT, 'data', 'broker_statement.json')
 stmt_backup = os.path.join(ROOT, 'data', 'broker_statement.json.bak')
 if os.path.exists(stmt_path):
     shutil.copy2(stmt_path, stmt_backup)
 
+broker = {
+    'account': '51312640', 'broker': '广发证券',
+    'current_positions': current, 'closed_positions': closed, 'all_trades': all_trades_out,
+}
 with open(stmt_path, 'w', encoding='utf-8') as f:
     json.dump(broker, f, ensure_ascii=False, indent=2)
+
+# --- Step 4: Write to SQLite (replaces legacy system_data.json sync) ---
+try:
+    upsert_positions(current, closed, all_trades_out)
+    print("  Positions written to SQLite")
+except Exception as e:
+    print(f"  SQLite write failed: {e}")
 
 print("=== 当前持仓 ===")
 for code, pos in current.items():
@@ -117,22 +127,4 @@ for code, pos in closed.items():
 
 total_fees = sum(v['total_commission']+v['total_stamp_tax']+v['total_other_fees'] for v in current.values())
 print(f"\n总手续费: {total_fees:.2f}")
-
-# --- Step 4: Update system_data.json ---
-sys_path = os.path.join(ROOT, 'data', 'system_data.json')
-sys_backup = os.path.join(ROOT, 'data', 'system_data.json.bak')
-shutil.copy2(sys_path, sys_backup)
-
-with open(sys_path, 'r', encoding='utf-8') as f:
-    system = json.load(f)
-
-system['current_positions'] = current
-system['closed_positions'] = closed
-system['all_trades'] = all_trades_out
-
-with open(sys_path, 'w', encoding='utf-8') as f:
-    json.dump(system, f, ensure_ascii=False, indent=2)
-
-print(f"\nsystem_data.json 已更新")
-print(f"broker_statement.json 已更新")
-print(f"备份已保存为 .bak 文件")
+print(f"\nbroker_statement.json 已保存，SQLite 已更新")
