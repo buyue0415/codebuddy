@@ -293,7 +293,7 @@ def main():
     watchlist = get_watchlist()
     print(f"[sync_all] Watchlist: {len(watchlist)} stocks")
 
-    # Step 1: Fetch news
+    # Step 1: Fetch news with dedup
     print("[Step 1] Fetching news for all watchlist stocks ...")
     try:
         from fetch_news import fetch_news_node
@@ -308,8 +308,16 @@ def main():
             else:
                 print(f"  News for {name}({code}): no data")
         if all_news:
-            upsert_news(all_news, TODAY)
-            print(f"  Saved {len(all_news)} news items to DB")
+            # In-memory dedup by URL first, fallback to (title, date, code)
+            seen = set()
+            deduped = []
+            for n in all_news:
+                key = (n.get('url', ''), n['title'], n['date'], n['code'])
+                if key not in seen:
+                    seen.add(key)
+                    deduped.append(n)
+            upsert_news(deduped)
+            print(f"  Saved {len(deduped)} unique news items (filtered from {len(all_news)})")
     except Exception as e:
         print(f"  News fetch skipped: {e}")
 

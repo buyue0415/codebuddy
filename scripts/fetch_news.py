@@ -172,46 +172,31 @@ def main():
         print("[fetch_news] No news fetched. Check network connectivity.")
         return
 
-    # Persist to SQLite
-    db = get_db()
-    inserted = 0
-    seen = set()
+    # Stronger in-memory dedup: prefer URL as unique key, fallback to (title, date, code)
+    seen_url = set()
+    seen_fallback = set()
+    deduped = []
     for n in all_news:
-        # Deduplicate by title+date+code within this batch
-        dedup_key = (n['title'], n['date'], n['code'])
-        if dedup_key in seen:
-            continue
-        seen.add(dedup_key)
+        url_key = n.get('url', '')
+        fallback_key = (n['title'], n['date'], n['code'])
+        if url_key and url_key not in seen_url:
+            seen_url.add(url_key)
+            deduped.append(n)
+        elif not url_key and fallback_key not in seen_fallback:
+            seen_fallback.add(fallback_key)
+            deduped.append(n)
 
-        try:
-            # Check if already in DB
-            exist = db.execute(
-                "SELECT id FROM news WHERE title=? AND date=? AND code=?",
-                [n['title'], n['date'], n['code']]
-            ).fetchone()
-            if exist:
-                continue
+    # Persist via upsert which uses INSERT OR IGNORE + unique index
+    from db_helper import upsert_news
+    upsert_news(deduped)
 
-            db.execute(
-                "INSERT INTO news(date, code, title, summary, source, sentiment, major) "
-                "VALUES(?, ?, ?, ?, ?, ?, ?)",
-                [
-                    n['date'], n['code'], n['title'],
-                    n.get('summary', ''), n.get('source', '综合'),
-                    n.get('sentiment', 'neutral'),
-                    n.get('major', 0),
-                ]
-            )
-            inserted += 1
-        except Exception as e:
-            pass
-
-    db.commit()
-    # Count before closing
+    # Count total after write
+    db = get_db()
     total = db.execute("SELECT COUNT(*) FROM news").fetchone()[0]
     db.close()
 
-    print(f"\n[fetch_news] Done. Fetched {len(all_news)} items, inserted {inserted} new.")
+    print(f"\n[fetch_news] Done. Fetched {len(all_news)} items, "
+          f"deduped to {len(deduped)}, saved via upsert.")
     print(f"[fetch_news] DB now has {total} total news.")
 
 if __name__ == '__main__':

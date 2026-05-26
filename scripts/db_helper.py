@@ -427,14 +427,38 @@ def upsert_quotes(quotes_dict):
     db.commit(); db.close()
 
 def upsert_news(news_list, today=None):
-    import json
+    """Persist news to SQLite with strict dedup.
+
+    Uses INSERT OR IGNORE with unique index idx_news_unique(code, date, title)
+    to silently skip duplicates. The `today` parameter is kept for backward
+    compatibility but no longer performs bulk DELETE — dedup is handled at
+    the DB constraint level.
+    """
     db = get_db()
-    if today:
-        db.execute("DELETE FROM news WHERE date=?", [today])
+    inserted = 0
+    skipped = 0
     for n in news_list:
-        db.execute("INSERT INTO news(date,code,title,summary,source,sentiment,major) VALUES(?,?,?,?,?,?,?)",
-            [n.get('date'), n.get('code'), n.get('title'), n.get('summary',''), n.get('source',''), n.get('sentiment',''), 1 if n.get('major') else 0])
-    db.commit(); db.close()
+        try:
+            db.execute(
+                "INSERT OR IGNORE INTO news(date,code,title,summary,source,sentiment,major,url) "
+                "VALUES(?,?,?,?,?,?,?,?)",
+                [
+                    n.get('date'), n.get('code'), n.get('title'),
+                    n.get('summary', ''), n.get('source', '综合'),
+                    n.get('sentiment', 'neutral'), 1 if n.get('major') else 0,
+                    n.get('url', ''),
+                ]
+            )
+            if db.total_changes > 0:
+                inserted += 1
+            else:
+                skipped += 1
+        except Exception as e:
+            pass
+    db.commit()
+    if inserted or skipped:
+        print(f"  DB upsert: {inserted} inserted, {skipped} skipped (duplicate)")
+    db.close()
 
 def upsert_seasonal(code, factors):
     import json
