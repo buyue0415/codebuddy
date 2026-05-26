@@ -18,8 +18,11 @@ build/
 
 # Data & backups (generated)
 backups/
-data/*.db
+data/*.db*
 data/*.sqlite
+
+# JSON legacy files (migrated to SQLite)
+data/system_data.json
 
 # Excel files (personal data)
 *.xlsx
