@@ -52,6 +52,27 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;backgr
 .page.active{display:block}
 .card{background:#fff;border-radius:12px;padding:24px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
 .card h2{font-size:18px;margin-bottom:16px;color:#1e3a5f;border-left:4px solid #2563eb;padding-left:12px}
+
+/* K线增强样式 */
+.kline-header{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+.kline-toolbar{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;padding:8px 12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;align-items:center}
+.kline-tb-group{display:flex;align-items:center;gap:3px}
+.kline-tb-label{font-size:11px;color:#64748b;margin-right:4px;white-space:nowrap;font-weight:600}
+.kline-chk{display:inline-flex;align-items:center;gap:2px;font-size:12px;color:#475569;cursor:pointer;padding:2px 6px;border-radius:4px;transition:.1s}
+.kline-chk:hover{background:#e2e8f0}
+.kline-chk input[type=checkbox]{width:13px;height:13px;margin:0;cursor:pointer;accent-color:#2563eb}
+.kline-chk span{line-height:1}
+.kline-btn{font-size:12px;padding:3px 10px;border:1px solid #cbd5e1;background:#fff;color:#475569;border-radius:4px;cursor:pointer;transition:all .12s;white-space:nowrap;line-height:1.5}
+.kline-btn:hover{background:#eef2ff;border-color:#818cf8;color:#4338ca}
+.kline-btn.active{background:#2563eb;color:#fff;border-color:#2563eb}
+.chart-box canvas{width:100%!important;height:100%!important}
+#klineTooltip{position:absolute;pointer-events:none;background:rgba(15,23,42,.92);color:#e2e8f0;border-radius:6px;padding:10px 14px;font-size:12px;line-height:1.6;display:none;z-index:50;box-shadow:0 4px 12px rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.08);backdrop-filter:blur(4px);font-family:Consolas,'Courier New',monospace;min-width:160px}
+#klineTooltip .tt-date{color:#94a3b8;font-size:11px;margin-bottom:4px}
+#klineTooltip .tt-row{display:flex;justify-content:space-between;gap:16px;padding:1px 0}
+#klineTooltip .tt-row .tt-label{color:#94a3b8}
+#klineTooltip .tt-row .tt-val{font-weight:600;text-align:right}
+#klineTooltip .tt-row .tt-val.up{color:#ef4444}
+#klineTooltip .tt-row .tt-val.dn{color:#22c55e}
 .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px}
 .stat-item{color:#fff;border-radius:12px;padding:20px;position:relative;overflow:hidden}
 .stat-item::after{content:'';position:absolute;top:-20px;right:-20px;width:80px;height:80px;background:rgba(255,255,255,.08);border-radius:50%}
@@ -311,11 +332,41 @@ tr:hover td{background:#f8fafc}
 <!-- 页面2：K线走势 -->
 <div id="page-kline" class="page">
 <div class="card">
-<div class="tab-bar">
-<div id="kline-tabs" class="tab-bar" style="margin-bottom:12px"></div>
+<div class="kline-header">
+  <div id="kline-tabs" class="tab-bar" style="margin-bottom:0"></div>
 </div>
-<h2 id="kline-title">兴业银行 3年月度走势</h2>
-<div class="chart-box"><canvas id="klineChart"></canvas></div>
+<!-- 工具栏 -->
+<div class="kline-toolbar">
+  <div class="kline-tb-group">
+    <span class="kline-tb-label">均线</span>
+    <label class="kline-chk"><input type="checkbox" checked data-ma="5"><span>MA5</span></label>
+    <label class="kline-chk"><input type="checkbox" checked data-ma="10"><span>MA10</span></label>
+    <label class="kline-chk"><input type="checkbox" data-ma="20"><span>MA20</span></label>
+    <label class="kline-chk"><input type="checkbox" data-ma="60"><span>MA60</span></label>
+  </div>
+  <div class="kline-tb-group">
+    <span class="kline-tb-label">副图</span>
+    <button class="kline-btn" data-indicator="macd">MACD</button>
+    <button class="kline-btn" data-indicator="kdj">KDJ</button>
+    <button class="kline-btn" data-indicator="volume">成交量</button>
+    <button class="kline-btn active" data-indicator="none">隐藏</button>
+  </div>
+  <div class="kline-tb-group">
+    <span class="kline-tb-label">画线</span>
+    <button class="kline-btn" data-draw="cursor">光标</button>
+    <button class="kline-btn" data-draw="trend">趋势线</button>
+    <button class="kline-btn" data-draw="hori">水平线</button>
+    <button class="kline-btn" data-draw="clear">清除</button>
+    <button class="kline-btn" data-draw="undo" style="margin-left:4px">撤销</button>
+  </div>
+  <div class="kline-tb-group" style="margin-left:auto">
+    <button class="kline-btn" id="kline-auto-fit" title="自适应">自适应</button>
+  </div>
+</div>
+<div class="chart-box" style="position:relative;height:520px">
+  <canvas id="klineChart"></canvas>
+  <div id="klineTooltip"></div>
+</div>
 </div>
 <div class="card">
 <h2 id="monthly-title">月度涨跌幅</h2>
@@ -897,95 +948,44 @@ genStockTabs('news-stock-tabs','switchNews',currentKlineCode);
 
 // 管理页列表
 if(document.getElementById('mgmt-list')) refreshWatchlistUI();
+
+// K线工具栏事件绑定
+document.querySelectorAll('#page-kline [data-ma]').forEach(function(cb){
+ cb.addEventListener('change',function(){
+  if(window._klineChart) window._klineChart.setMA(parseInt(this.dataset.ma), this.checked);
+ });
+});
+document.querySelectorAll('#page-kline [data-indicator]').forEach(function(btn){
+ btn.addEventListener('click',function(){
+  document.querySelectorAll('#page-kline [data-indicator]').forEach(function(b){b.classList.remove('active');});
+  this.classList.add('active');
+  if(window._klineChart) window._klineChart.setSubChart(this.dataset.indicator);
+ });
+});
+document.querySelectorAll('#page-kline [data-draw]').forEach(function(btn){
+ btn.addEventListener('click',function(){
+  if(window._klineChart) window._klineChart.setDrawMode(this.dataset.draw);
+  document.querySelectorAll('#page-kline [data-draw]').forEach(function(b){b.classList.remove('active');});
+  this.classList.add('active');
+ });
+});
+document.getElementById('kline-auto-fit').addEventListener('click',function(){
+ if(window._klineChart) window._klineChart.autoFit();
+});
 }
 
 function renderKline(code){
-const D=DATA, klineRaw=D.kline_daily&&D.kline_daily[code]||D.kline&&D.kline[code]||[], divs=D['dividends_'+code]||[], mc=D['monthly_changes_'+code]||[];
-const kline=klineRaw.slice().reverse();
-
+const D=DATA, klineRaw=D.kline_daily&&D.kline_daily[code]||D.kline&&D.kline[code]||[], mc=D['monthly_changes_'+code]||[];
 const name=getStockName(code);
-
 document.getElementById('kline-title').textContent=name+' 日K走势';
 document.getElementById('monthly-title').textContent=name+' 月度涨跌幅';
 
-const labels=kline.map(k=>k[0]);
-const closes=kline.map(k=>k.length===5?k[2]:k[4]);
-const sma20=calcSMA(closes,7);
-const sma60=calcSMA(closes,14);
+// Initialize chart engine
+if(window._klineChart)window._klineChart.destroy();
+window._klineChart = new KlineChart('klineChart','klineTooltip');
+window._klineChart.setData(code, klineRaw);
 
-// Build dividend lookup map: date -> {amount, price}
-const divLookup = {};
-divs.forEach(function(d){ divLookup[d.date] = d; });
-
-const divPoints=closes.map(function(c,i){
-  // Exact date match: mark the precise trading day where dividend was paid
-  return divLookup[labels[i]] ? c : null;
-});
-
-// Store bars for OHLC tooltip + dividend info
-var klineBars=kline.map(function(k){
-  var bar={date:k[0],open:k[1],close:k.length===5?k[2]:k[4],high:k.length===5?k[3]:k[2],low:k.length===5?k[4]:k[3]};
-  var dv=divLookup[k[0]];
-  if(dv){ bar.dividend={amount:dv.amount, price:dv.price, per_share:dv.per_share||0}; }
-  return bar;
-});
-
-// Tooltip element
-var klineCanvas=document.getElementById('klineChart');
-var klineTT=document.getElementById('kline-tooltip');
-if(!klineCanvas||!klineCanvas.parentElement) return;
-if(!klineTT){
- klineTT=document.createElement('div');klineTT.id='kline-tooltip';
- klineTT.style.cssText='position:absolute;pointer-events:none;background:rgba(0,0,0,.85);color:#fff;padding:10px 14px;border-radius:8px;font-size:12px;line-height:1.7;z-index:200;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.3);display:none;font-family:-apple-system,PingFang SC,Microsoft YaHei,sans-serif';
- klineCanvas.parentElement.appendChild(klineTT);
-}
-var onKlineMove=function(e){
- var chart=klineChartInst;if(!chart||!chart.scales) return;
- var rect=klineCanvas.getBoundingClientRect();
- var mx=e.clientX-rect.left, my=e.clientY-rect.top;
- var xs=chart.scales.x, ys=chart.scales.y;
- if(mx<xs.left||mx>xs.right||my<ys.top||my>ys.bottom){klineTT.style.display='none';window._klineCrossX=null;if(klineChartInst)klineChartInst.draw();return;}
- var idx=Math.round(xs.getValueForPixel(mx));
- if(idx<0||idx>=klineBars.length){klineTT.style.display='none';return;}
- var bar=klineBars[idx];
- var prevBar=klineBars[idx>0?idx-1:0];
- var chg=prevBar?((bar.close-prevBar.close)/prevBar.close*100):0;
- var cls=chg>=0?'#ef4444':'#16a34a',sn=chg>=0?'+':'';
- var dotX=xs.getPixelForValue(idx);
- klineTT.innerHTML='<div style=\"font-weight:600;margin-bottom:4px;color:#93c5fd\">'+bar.date+'</div><div>开:<span>'+fmt(bar.open)+'</span></div><div>收:<span style=\"color:'+cls+'\">'+fmt(bar.close)+'</span></div><div>高:<span style=\"color:#ef4444\">'+fmt(bar.high)+'</span></div><div>低:<span style=\"color:#16a34a\">'+fmt(bar.low)+'</span></div><div style=\"margin-top:3px;border-top:1px solid rgba(255,255,255,.15);padding-top:3px;color:'+cls+'\">涨跌: '+sn+fmt(chg)+'%</div>'+(bar.dividend?'<div style=\"margin-top:6px;border-top:2px solid #f59e0b;padding-top:5px;font-size:13px;line-height:1.8\"><span style=\"color:#fbbf24\">▼ 除权除息</span><div>到账: <span style=\"color:#34d399;font-weight:700\">'+fmt(bar.dividend.amount)+'</span> 元</div><div>每股分红: <span style=\"color:#60a5fa;font-weight:700\">'+fmt(bar.dividend.per_share||0)+'</span> 元</div></div>':'');
- klineTT.style.display='block';
- var bw=klineTT.offsetWidth||130,bh=klineTT.offsetHeight||120;
- var left=mx+16,top=my-bh/2;
- if(left+bw>rect.width-4)left=mx-bw-16;if(left<4)left=4;if(top<4)top=4;if(top+bh>rect.height-4)top=rect.height-bh-4;
- klineTT.style.left=left+'px';klineTT.style.top=top+'px';
- window._klineCrossX=dotX;klineChartInst.draw();
-};
-if(window._klineMoveFn)klineCanvas.removeEventListener('mousemove',window._klineMoveFn);
-if(window._klineLeaveFn)klineCanvas.removeEventListener('mouseleave',window._klineLeaveFn);
-window._klineMoveFn=onKlineMove;
-window._klineLeaveFn=function(){klineTT.style.display='none';window._klineCrossX=null;if(klineChartInst)klineChartInst.draw();};
-klineCanvas.addEventListener('mousemove',onKlineMove);
-klineCanvas.addEventListener('mouseleave',window._klineLeaveFn);
-
-// Crosshair
-var klineXPlugin={id:'klineX',afterDraw:function(chart){if(!window._klineCrossX)return;var ctx=chart.ctx,ra=chart.scales.y;ctx.save();ctx.setLineDash([4,3]);ctx.strokeStyle='rgba(100,100,255,.35)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(window._klineCrossX,ra.top);ctx.lineTo(window._klineCrossX,ra.bottom);ctx.stroke();ctx.restore();}};
-
-if(klineChartInst)klineChartInst.destroy();
-try{klineChartInst=new Chart(klineCanvas,{
-type:'line',
-data:{labels,datasets:[
-{label:'收盘价',data:closes,borderColor:'#2563eb',borderWidth:2,pointRadius:1,tension:.3,fill:false},
-{label:'SMA20',data:sma20,borderColor:'#f59e0b',borderWidth:1,pointRadius:0,borderDash:[4,2],fill:false},
-{label:'SMA60',data:sma60,borderColor:'#ef4444',borderWidth:1,pointRadius:0,borderDash:[6,3],fill:false},
-{label:'分红',data:divPoints,borderColor:'#dc2626',backgroundColor:'#dc2626',pointRadius:8,pointStyle:'triangle',showLine:false}
-]},
-options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{usePointStyle:true,font:{size:11}}},tooltip:{enabled:false}},scales:{x:{ticks:{maxTicksLimit:12,font:{size:10}}},y:{ticks:{font:{size:10}}}}},
-plugins:[klineXPlugin]
-});
-
-}catch(e){console.warn('Kline chart:',e.message);}
-
-// 月度涨跌：红涨绿跌
+// 月度涨跌柱状图
 if(monthlyChartInst)monthlyChartInst.destroy();
 const mcLabels=mc.map(m=>m[0]);
 const mcData=mc.map(m=>m[1]);
@@ -996,7 +996,7 @@ data:{labels:mcLabels,datasets:[{label:'涨跌幅%',data:mcData,backgroundColor:
 options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{maxTicksLimit:12,font:{size:10}}},y:{ticks:{callback:v=>v+'%',font:{size:10}}}}}
 });
 
-// 季节性：红涨绿跌
+// 季节性柱状图
 if(seasonalChartInst)seasonalChartInst.destroy();
 const seaData=DATA.seasonal[code]||[];
 const seaLabels=['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
@@ -1008,7 +1008,12 @@ options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:fals
 });
 }
 
-function switchKline(code){currentKlineCode=code;document.querySelectorAll('#page-kline .tab-btn').forEach(b=>b.classList.remove('active'));event.target.classList.add('active');renderKline(code);}
+function switchKline(code){
+currentKlineCode=code;
+document.querySelectorAll('#page-kline .tab-btn').forEach(b=>b.classList.remove('active'));
+if(event&&event.target)event.target.classList.add('active');
+renderKline(code);
+}
 
 function calcSMA(data,period){
 const result=[];
@@ -1799,6 +1804,7 @@ async function importExpertReport(){
 
 </script>
 <script src="deliverables/chart.umd.min.js"></script>
+<script src="deliverables/kline-chart.js"></script>
 <script src="scripts/render_intelligence.js"></script>
 <script>
 // Global error handler — prevents crashes from breaking the JS runtime

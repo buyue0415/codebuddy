@@ -1,6 +1,6 @@
 # 模块1: Web API 服务层
 
-> **核心文件**: `server.py` | **端口**: 8765 | **基类**: `ThreadedHTTPServer`
+> **核心文件**: `server.py` | **前端**: `deliverables/bank-stock-system.html`, `kline-chart.js` | **端口**: 8765 | **基类**: `ThreadedHTTPServer`
 
 ---
 
