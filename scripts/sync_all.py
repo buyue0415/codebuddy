@@ -7,6 +7,14 @@ V0.6 optimizations:
   - Removes HTML reinjection (V0.6 no longer uses inline DATA)
   - Conditional monthly kline generation (skips if already in DB)
   - Eliminates redundant in-memory JSON dictionary building
+  - kline data normalized to newest-first order
+  - Learning params loaded from DB (preserves self-learning progress)
+
+Execution flow (7 steps, aligned with specs/03-sync-engine.md):
+  Step 1: Fetch news          Step 2: Parallel K-line fetch
+  Step 3: Backfill predictions Step 4: Recalculate accuracy
+  Step 5: Generate predictions Step 6: Seasonal + monthly + quotes
+  Step 7: Write legacy JSON
 
 External data source: NeoData (via westock-data Node.js package)
 Target: SQLite stock.db (17 tables)
@@ -21,7 +29,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 from db_helper import (
-    get_watchlist, get_db,
+    get_watchlist, get_db, get_learning_params,
     upsert_kline_daily, upsert_kline_monthly, upsert_quotes,
     upsert_seasonal, clear_today_predictions, insert_daily_prediction,
     upsert_learning_params, upsert_accuracy_stats,
@@ -33,15 +41,15 @@ SCRIPT = 'scripts/index.js'
 TODAY = datetime.now().strftime("%Y-%m-%d")
 
 # =====================================================================
-# Step 0: Read watchlist from SQLite
+# Prerequisite: Read watchlist from SQLite
 # =====================================================================
 watchlist = get_watchlist()
 print(f"[sync_all] Watchlist: {len(watchlist)} stocks")
 
 # =====================================================================
-# Step 0.5: Fetch news for all watchlist stocks
+# Step 1: Fetch news for all watchlist stocks
 # =====================================================================
-print("\n[Step 0.5] Fetching news ...")
+print("[Step 1] Fetching news for all watchlist stocks ...")
 try:
     from fetch_news import fetch_news_node, _parse_news_table
     from db_helper import upsert_news
@@ -64,9 +72,9 @@ except Exception as e:
     print(f"  News fetch skipped: {e}")
 
 # =====================================================================
-# Step 1: Fetch daily K-line in parallel
+# Step 2: Fetch daily K-line in parallel
 # =====================================================================
-print("\n[Step 1] Fetching daily K-line ...")
+print("\n[Step 2] Fetching daily K-line in parallel ...")
 
 def fetch_kline(market_code: str, limit: int = 200) -> list:
     """Fetch daily K-line from NeoData via Node.js subprocess."""
@@ -99,10 +107,16 @@ def fetch_kline(market_code: str, limit: int = 200) -> list:
         return []
 
 def sync_one_stock(stock: dict) -> tuple:
-    """Fetch + persist K-line for a single stock. Returns (code, bars)."""
+    """Fetch + persist K-line for a single stock. Returns (code, bars).
+    
+    NOTE: bars are guaranteed newest-first (descending by date) so that
+    kline_results[code][0] is always the latest bar across the entire script.
+    """
     code, name, mkt = stock['code'], stock['name'], stock.get('market', 'sh')
     kdata = fetch_kline(f'{mkt}{code}')
     if kdata:
+        # Normalize: sort newest-first so [0] is always the latest bar
+        kdata.sort(key=lambda x: x[0], reverse=True)
         bars = [[k[0], k[1], k[2], k[3], k[4]] for k in kdata]
         try:
             upsert_kline_daily(code, bars)
@@ -383,9 +397,9 @@ def gen_pred(code: str, info: dict, lp: dict) -> dict:
 
 
 # =====================================================================
-# Step 1.5: Backfill ALL unverified predictions with actual K-line data
+# Step 3: Backfill ALL unverified predictions with actual K-line data
 # =====================================================================
-print("\n[Step 1.5] Backfilling predictions with actual data ...")
+print("\n[Step 3] Backfilling predictions with actual data ...")
 for stock in watchlist:
     code = stock['code']
     kdata = kline_results.get(code, [])
@@ -441,7 +455,7 @@ for stock in watchlist:
         print(f"  {stock['name']}({code}): no unverified past predictions to backfill")
 
 # Recalculate accuracy stats from actual backfilled data
-print("\n[Step 1.6] Recalculating accuracy stats ...")
+print("[Step 4] Recalculating accuracy stats ...")
 for stock in watchlist:
     code = stock['code']
     db = get_db()
@@ -480,9 +494,9 @@ for stock in watchlist:
     print(f"  {stock['name']}({code}): dir_acc={dir_rate}% ({dir_correct}/{dir_total}), range_acc={range_rate}%")
 
 # =====================================================================
-# Step 2: Generate daily predictions
+# Step 5: Generate daily predictions
 # =====================================================================
-print("\n[Step 2] Generating predictions ...")
+print("\n[Step 5] Generating predictions ...")
 
 # Clear today's old predictions before regenerating
 try:
@@ -511,7 +525,8 @@ for stock in watchlist:
         print(f"  {stock['name']}({code}): insufficient kline data")
         continue
 
-    lp = new_lp()
+    # Use existing learning params if available (preserves self-learning progress)
+    lp = get_learning_params(code) or new_lp()
     pred = gen_pred(code, info, lp)
     new_preds.append(pred)
 
@@ -530,7 +545,7 @@ for stock in watchlist:
           f"conf={pred['next_day']['confidence']:.0%}")
 
 # =====================================================================
-# Step 2.5: Seasonal + monthly kline (conditionally for new stocks)
+# Step 6: Seasonal + monthly kline (conditionally for new stocks)
 # =====================================================================
 DEFAULT_SEASONAL = [0.8, -2.5, 1.2, 0.5, -1.0, 2.3, 3.5, -1.8, 1.5, 2.8, -1.2, 3.0]
 
@@ -588,7 +603,7 @@ for stock in watchlist:
             print(f"  DB write quote {code} failed: {e}")
 
 # =====================================================================
-# Step 3: Write legacy system_data.json (for deprecated /api/system-data)
+# Step 7: Write legacy system_data.json (for deprecated /api/system-data)
 # =====================================================================
 legacy = {
     'generated':  TODAY,
@@ -622,8 +637,8 @@ try:
     with open(os.path.join(ROOT, 'data', 'system_data.json'), 'w',
               encoding='utf-8') as f:
         json.dump(legacy, f, ensure_ascii=False, indent=2)
-    print(f"\n[Step 3] system_data.json saved (legacy)")
+    print(f"\n[Step 7] system_data.json saved (legacy)")
 except Exception as e:
-    print(f"\n[Step 3] system_data.json write failed: {e}")
+    print(f"\n[Step 7] system_data.json write failed: {e}")
 
 print(f"\n[sync_all] Done. {len(watchlist)} stocks, {len(new_preds)} predictions.")
