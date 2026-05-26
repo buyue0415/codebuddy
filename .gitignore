@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# CodeBuddy config & memory
+.workbuddy/
+.codebuddy/
+
+# Data & backups (generated)
+backups/
+data/*.db
+data/*.sqlite
+
+# Excel files (personal data)
+*.xlsx
+*.xls
+
+# Logs
+*.log
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Environment
+.env
+.env.local
+.venv
+venv/
+
+# Junk/temporary files
+console.log*
+kline_bar_exists
+miaoxiang/
+'
+3
