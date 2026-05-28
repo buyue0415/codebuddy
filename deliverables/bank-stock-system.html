@@ -1014,7 +1014,8 @@ document.querySelectorAll('#page-kline [data-draw]').forEach(function(btn){
   this.classList.add('active');
  });
 });
-document.getElementById('kline-auto-fit').addEventListener('click',function(){
+var klineAutoFit = document.getElementById('kline-auto-fit');
+if(klineAutoFit) klineAutoFit.addEventListener('click',function(){
  if(window._klineChart) window._klineChart.autoFit();
 });
 }

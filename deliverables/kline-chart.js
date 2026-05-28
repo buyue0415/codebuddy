@@ -8,9 +8,11 @@
 class KlineChart {
   constructor(canvasId, tooltipId) {
     this.canvas = document.getElementById(canvasId);
-    this.ctx = this.canvas.getContext('2d');
     this.tooltip = document.getElementById(tooltipId);
+    if (!this.canvas) { console.warn('KlineChart: canvas not found', canvasId); return; }
+    this.ctx = this.canvas.getContext('2d');
     this.dpr = window.devicePixelRatio || 1;
+    this._alive = true;
 
     // Data
     this.bars = [];        // [{date,open,close,high,low}]
@@ -62,6 +64,7 @@ class KlineChart {
   // ===================== Data =====================
 
   setData(code, rawBars) {
+    if (!this._alive) return;
     this.currentCode = code;
     // rawBars: [[date,open,close,high,low], ...] newest-first
     // Convert to oldest-first for chart
@@ -74,6 +77,12 @@ class KlineChart {
       this._autoFit = false;
     }
     this.resize();
+    // Skip draw if canvas has no dimensions (page hidden)
+    if (!this.W || !this.H) {
+      var self = this;
+      setTimeout(function(){ self.resize(); self.draw(); }, 100);
+      return;
+    }
     this.draw();
   }
 
@@ -88,9 +97,12 @@ class KlineChart {
   }
 
   resize() {
+    if (!this.canvas || !this.ctx) return;
     const parent = this.canvas.parentElement;
+    if (!parent) return;
     const w = parent.clientWidth;
     const h = parent.clientHeight;
+    if (!w || !h) return;
     this.canvas.width = w * this.dpr;
     this.canvas.height = h * this.dpr;
     this.canvas.style.width = w + 'px';
@@ -215,6 +227,7 @@ class KlineChart {
   // ===================== Main Draw =====================
 
   draw() {
+    if (!this.ctx || !this._alive) return;
     const ctx = this.ctx;
     const W = this.W, H = this.H;
     if (!W || !H || this.bars.length === 0) return;
@@ -621,15 +634,17 @@ class KlineChart {
 
   _bindEvents() {
     const c = this.canvas;
+    if (!c) return;
     c.addEventListener('mousemove', e => this._onMouseMove(e));
-    c.addEventListener('mouseleave', () => { this.mouseX = -1; this.tooltip.style.display = 'none'; this.draw(); });
+    c.addEventListener('mouseleave', () => { this.mouseX = -1; if (this.tooltip) this.tooltip.style.display = 'none'; this.draw(); });
     c.addEventListener('mousedown', e => this._onMouseDown(e));
     c.addEventListener('mouseup', e => this._onMouseUp(e));
     c.addEventListener('wheel', e => this._onWheel(e), {passive: false});
-    window.addEventListener('resize', () => { this.resize(); this.draw(); });
+    window.addEventListener('resize', () => { if (this._alive) { this.resize(); this.draw(); } });
   }
 
   _onMouseMove(e) {
+    if (!this.canvas) return;
     const rect = this.canvas.getBoundingClientRect();
     this.mouseX = e.clientX - rect.left;
     this.mouseY = e.clientY - rect.top;
@@ -799,7 +814,8 @@ class KlineChart {
   }
 
   destroy() {
-    // Events are removed by replacing canvas in DOM
+    this._alive = false;
+    if (this.tooltip) this.tooltip.style.display = 'none';
     this.canvas = null;
     this.ctx = null;
   }
