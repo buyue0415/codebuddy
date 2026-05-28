@@ -1039,38 +1039,30 @@ function renderKline(code){
 try{
 const D=DATA, klineRaw=D.kline_daily&&D.kline_daily[code]||D.kline&&D.kline[code]||[], mc=D['monthly_changes_'+code]||[];
 const name=getStockName(code);
-document.getElementById('kline-title').textContent=name+' 日K走势';
-document.getElementById('monthly-title').textContent=name+' 月度涨跌幅';
-
-// Initialize chart engine
+if(document.getElementById('kline-title'))document.getElementById('kline-title').textContent=name+' 日K走势';
+if(document.getElementById('monthly-title'))document.getElementById('monthly-title').textContent=name+' 月度涨跌幅';
 if(window._klineChart)window._klineChart.destroy();
 window._klineChart = new KlineChart('klineChart','klineTooltip');
 window._klineChart.setData(code, klineRaw);
-
-// 月度涨跌柱状图
 if(monthlyChartInst)monthlyChartInst.destroy();
-const mcLabels=mc.map(m=>m[0]);
-const mcData=mc.map(m=>m[1]);
-const mcColors=mcData.map(v=>v>=0?'#dc2626':'#16a34a');
-monthlyChartInst=new Chart(document.getElementById('monthlyChart'),{
-type:'bar',
-data:{labels:mcLabels,datasets:[{label:'涨跌幅%',data:mcData,backgroundColor:mcColors}]},
-options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{maxTicksLimit:12,font:{size:10}}},y:{ticks:{callback:v=>v+'%',font:{size:10}}}}}
-});
-
-// 季节性柱状图
+if(mc&&mc.length){
+ const mcLabels=mc.map(m=>m[0]),mcData=mc.map(m=>m[1]),mcColors=mcData.map(v=>v>=0?'#dc2626':'#16a34a');
+ try{monthlyChartInst=new Chart(document.getElementById('monthlyChart'),{type:'bar',
+  data:{labels:mcLabels,datasets:[{label:'涨跌幅%',data:mcData,backgroundColor:mcColors}]},
+  options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}}}});
+ }catch(e){}
+}
 if(seasonalChartInst)seasonalChartInst.destroy();
 const seaData=DATA.seasonal[code]||[];
-const seaLabels=['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
-const seaColors=seaData.map(v=>v>=0?'#dc2626':'#16a34a');
-seasonalChartInst=new Chart(document.getElementById('seasonalChart'),{
-type:'bar',
-data:{labels:seaLabels,datasets:[{label:'月均涨跌幅%',data:seaData,backgroundColor:seaColors}]},
-options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{ticks:{callback:v=>v+'%'}}}}
-});
+if(seaData.length){
+ const seaLabels=['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'],seaColors=seaData.map(v=>v>=0?'#dc2626':'#16a34a');
+ try{seasonalChartInst=new Chart(document.getElementById('seasonalChart'),{type:'bar',
+  data:{labels:seaLabels,datasets:[{label:'月均涨跌幅%',data:seaData,backgroundColor:seaColors}]},
+  options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}}}});
+ }catch(e){}
 }
-
 }catch(e){console.warn('[renderKline]',e.message);}
+}
 function switchKline(code){
 currentKlineCode=code;
 document.querySelectorAll('#page-kline .tab-btn').forEach(b=>b.classList.remove('active'));
@@ -1886,7 +1878,7 @@ async function importExpertReport(){
 
 </script>
 <script src="deliverables/chart.umd.min.js"></script>
-<script src="deliverables/kline-chart.js"></script>
+<script src="deliverables/kline-chart.js?v=2"></script>
 <script src="scripts/render_intelligence.js"></script>
 <script>
 // Global error handler — prevents crashes from breaking the JS runtime
