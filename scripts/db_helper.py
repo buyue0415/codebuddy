@@ -5,8 +5,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(ROOT, 'data', 'stock.db')
 
 def get_db():
-    db = sqlite3.connect(DB_PATH)
+    db = sqlite3.connect(DB_PATH, timeout=10)
     db.row_factory = sqlite3.Row
+    db.execute("PRAGMA journal_mode=WAL")
+    db.execute("PRAGMA busy_timeout=5000")
     return db
 
 # ---- Query functions ----
@@ -48,7 +50,9 @@ def get_kline_monthly(code):
     db = get_db()
     rows = db.execute(
         "SELECT date, open, high, low, close, volume, change_pct FROM kline_monthly "
-        "WHERE code=? AND substr(date,9,2)='01' ORDER BY date DESC",
+        "WHERE code=? "
+        "GROUP BY substr(date,1,7) "
+        "ORDER BY date DESC",
         [code]
     ).fetchall()
     return [[r['date'], r['open'], r['high'], r['low'], r['close'], r['volume'], r['change_pct']] for r in rows]
@@ -295,7 +299,7 @@ def get_all_kline_daily(codes=None):
     return kd
 
 def get_all_kline_monthly(codes=None):
-    """Batch monthly kline (only true monthly bars with day=01)"""
+    """Batch monthly kline — one bar per month, dedup by year-month"""
     db = get_db()
     if codes is None:
         codes = get_watchlist_codes()
@@ -303,7 +307,9 @@ def get_all_kline_monthly(codes=None):
     for code in codes:
         rows = db.execute(
             "SELECT date, open, high, low, close, volume, change_pct FROM kline_monthly "
-            "WHERE code=? AND substr(date,9,2)='01' ORDER BY date DESC",
+            "WHERE code=? "
+            "GROUP BY substr(date,1,7) "
+            "ORDER BY date DESC",
             [code]
         ).fetchall()
         km[code] = [[r['date'], r['open'], r['high'], r['low'], r['close'], r['volume'], r['change_pct']] for r in rows]

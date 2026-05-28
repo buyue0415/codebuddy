@@ -514,12 +514,7 @@ def main():
             upsert_seasonal(code, DEFAULT_SEASONAL)
         except Exception:
             pass
-        db = get_db()
-        has_monthly = db.execute(
-            "SELECT COUNT(*) FROM kline_monthly WHERE code=?", [code]
-        ).fetchone()[0] > 0
-        db.close()
-        if not has_monthly and code in kline_results and kline_results[code]:
+        if code in kline_results and kline_results[code]:
             daily = kline_results[code]
             monthly = {}
             for bar in daily:
@@ -530,11 +525,19 @@ def main():
                 monthly[m]['low'] = min(monthly[m]['low'], bar[4])
                 monthly[m]['close'] = bar[2]
                 monthly[m]['vol'] += 1
-            bars_m = [[f"{m}-01", v['open'], v['high'], v['low'], v['close'], v['vol'], 0.0]
-                      for m, v in sorted(monthly.items())]
+            # Sort months chronologically to calculate change_pct
+            prev_close = None
+            bars_m = []
+            for m in sorted(monthly.keys()):
+                v = monthly[m]
+                chg = 0.0
+                if prev_close is not None and prev_close != 0:
+                    chg = round((v['close'] - prev_close) / prev_close * 100, 2)
+                prev_close = v['close']
+                bars_m.append([f"{m}-01", v['open'], v['high'], v['low'], v['close'], v['vol'], chg])
             try:
                 upsert_kline_monthly(code, bars_m)
-                print(f"  {stock['name']}({code}): generated {len(bars_m)} monthly bars")
+                print(f"  {stock['name']}({code}): {len(bars_m)} monthly bars (latest chg: {bars_m[-1][6]:.1f}%)")
             except Exception as e:
                 print(f"  DB write monthly kline {code} failed: {e}")
         if code in kline_results and kline_results[code]:

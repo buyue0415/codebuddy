@@ -26,15 +26,45 @@ _init_cache = None
 _init_cache_time = 0
 CACHE_TTL = 5
 
-# Reusable DB connection (Category B optimization)
-_server_db = None
+# No global DB connection — each db_helper function opens its own
+# connection with WAL mode and busy_timeout for thread safety.
 
-def get_server_db():
-    global _server_db
-    if _server_db is None:
-        _server_db = sqlite3.connect(os.path.join(ROOT, "data", "stock.db"))
-        _server_db.row_factory = sqlite3.Row
-    return _server_db
+# Tables to clean up when removing a stock from watchlist
+# NOTE: prediction_hourly/prediction_signals use pred_id (not code column),
+#       expert_reports has no code column — handled separately below.
+_CLEANUP_TABLES = [
+    "kline_daily", "kline_monthly", "daily_predictions",
+    "seasonal", "learning_params", "accuracy_stats",
+    "dividends", "quotes", "news", "positions",
+    "closed_positions", "trades",
+]
+
+def _cleanup_stock_data(code):
+    """Delete all data for a stock from the database (watchlist cleanup + related tables)."""
+    import sqlite3
+    db = sqlite3.connect(os.path.join(ROOT, "data", "stock.db"), timeout=10)
+    db.execute("PRAGMA journal_mode=WAL")
+    db.execute("PRAGMA busy_timeout=5000")
+    db.execute("UPDATE stocks SET watchlist=0 WHERE code=?", [code])
+    db.execute("DELETE FROM watchlist WHERE code=?", [code])
+    for tbl in _CLEANUP_TABLES:
+        db.execute(f"DELETE FROM {tbl} WHERE code=?", [code])
+    # prediction_hourly and prediction_signals use pred_id (no code column)
+    db.execute(
+        "DELETE FROM prediction_hourly WHERE pred_id IN "
+        "(SELECT id FROM daily_predictions WHERE code=?)", [code])
+    db.execute(
+        "DELETE FROM prediction_signals WHERE pred_id IN "
+        "(SELECT id FROM daily_predictions WHERE code=?)", [code])
+    db.commit()
+    db.close()
+    _invalidate_init_cache()
+
+
+def _invalidate_init_cache():
+    """Invalidate the init data cache so next request rebuilds from DB."""
+    global _init_cache
+    _init_cache = None
 
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
@@ -173,11 +203,7 @@ def _build_init_data() -> dict:
         init_data["positions"] = {"current_positions": {}, "closed_positions": {}, "all_trades": []}
     try:
         if DB_AVAILABLE:
-            db = get_server_db()
-            kd = {}
-            for r in db.execute("SELECT code,date,open,close,high,low FROM kline_daily ORDER BY code,date DESC").fetchall():
-                kd.setdefault(r[0], []).append([r[1], r[2], r[3], r[4], r[5]])
-            init_data["kline_daily"] = kd
+            init_data["kline_daily"] = get_all_kline_daily()
         else:
             init_data["kline_daily"] = {}
     except Exception:
@@ -188,13 +214,11 @@ def _build_init_data() -> dict:
         init_data["daily_predictions"] = []
     try:
         if DB_AVAILABLE:
-            db = get_server_db()
-            news = [dict(r) for r in db.execute("SELECT id,date,code,title,summary,source,sentiment,major FROM news ORDER BY date DESC").fetchall()]
+            news = get_news('all')
             for n in news:
                 n["major"] = bool(n["major"])
             init_data["news"] = news
-            er = [json.loads(r["report_data"]) for r in db.execute("SELECT * FROM expert_reports ORDER BY date DESC").fetchall()]
-            init_data["expert_reports"] = er
+            init_data["expert_reports"] = get_expert_reports()
         else:
             init_data["news"] = []
             init_data["expert_reports"] = []
@@ -210,26 +234,9 @@ def _build_init_data() -> dict:
     except Exception:
         init_data["seasonal"] = {}
     try:
-        init_data["learning_params"] = {}
-        if DB_AVAILABLE:
-            db = get_server_db()
-            codes = tuple(s["code"] for s in init_data.get("watchlist", []))
-            if codes:
-                for r in db.execute(
-                    f"SELECT * FROM learning_params WHERE code IN ({','.join('?' * len(codes))})",
-                    codes
-                ).fetchall():
-                    lp = {
-                        'signal_weights': json.loads(r['signal_weights']),
-                        'hourly_bias': json.loads(r['hourly_bias']),
-                        'seasonal_adj': json.loads(r['seasonal_adj']),
-                        'confidence_beta': json.loads(r['confidence_beta']),
-                        'learning_rate': r['learning_rate'], 'mw_beta': r['mw_beta'],
-                        'update_count': r['update_count'],
-                    }
-                    init_data["learning_params"][r["code"]] = lp
+        init_data["learning_params"] = get_all_learning_params() if DB_AVAILABLE else {}
     except Exception:
-        pass
+        init_data["learning_params"] = {}
     try:
         init_data["accuracy_stats"] = get_all_accuracy_stats() if DB_AVAILABLE else {}
     except Exception:
@@ -578,18 +585,7 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
         if path.startswith("/api/v2/watchlist/") and len(path) > len("/api/v2/watchlist/"):
             code = path.split("/api/v2/watchlist/")[1]
             try:
-                from db_helper import remove_watchlist
-                remove_watchlist(code)
-                # Also clean up related tables
-                import sqlite3
-                db = sqlite3.connect(os.path.join(ROOT, "data", "stock.db"))
-                for tbl in ["kline_daily", "kline_monthly", "daily_predictions",
-                             "prediction_hourly", "prediction_signals",
-                             "seasonal", "learning_params", "accuracy_stats",
-                             "dividends", "quotes"]:
-                    db.execute(f"DELETE FROM {tbl} WHERE code=?", [code])
-                db.commit(); db.close()
-
+                _cleanup_stock_data(code)
                 json_response(self, {"success": True, "message": f"已移除 {code}"})
             except Exception as e:
                 json_response(self, {"success": False, "error": str(e)}, 500)
@@ -634,10 +630,11 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
                     add_watchlist(code, name, market)
 
                 ok1, out1 = run_script("sync_all.py", 120)
+                _invalidate_init_cache()
                 json_response(self, {
                     "success": ok1,
                     "message": f"已添加 {name}({code})，全模块数据同步完成" if ok1 else "添加失败",
-                    "watchlist": wl_json,
+                    "watchlist": wl if DB_AVAILABLE else [],
                     "output": out1[-500:] if out1 else "",
                 })
 
@@ -658,7 +655,7 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
 
                 # Initialize data for new stock — sync ALL modules
                 ok1, out1 = run_script("sync_all.py", 120)
-
+                _invalidate_init_cache()
                 json_response(self, {
                     "success": ok1,
                     "message": f"已添加 {name}({code})，全模块数据同步完成" if ok1 else "添加失败",
@@ -672,25 +669,10 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
                     json_response(self, {"success": False, "error": "code required"}, 400)
                     return
 
-                sql_cleaned = False
                 try:
-                    from db_helper import remove_watchlist
-                    remove_watchlist(code)
-                    import sqlite3
-                    db = sqlite3.connect(os.path.join(ROOT, "data", "stock.db"))
-                    for tbl in ["kline_daily", "kline_monthly", "daily_predictions",
-                                 "prediction_hourly", "prediction_signals",
-                                 "seasonal", "learning_params", "accuracy_stats",
-                                 "dividends", "quotes"]:
-                        db.execute(f"DELETE FROM {tbl} WHERE code=?", [code])
-                    db.commit()
-                    db.close()
-                    sql_cleaned = True
+                    _cleanup_stock_data(code)
                 except Exception as e:
-                    print(f"[cleanup] SQLite cleanup warning: {e}")
-
-                if not sql_cleaned:
-                    json_response(self, {"success": False, "error": f"股票 {code} 不存在"}, 404)
+                    json_response(self, {"success": False, "error": f"删除失败: {e}"}, 500)
                     return
 
                 json_response(self, {
