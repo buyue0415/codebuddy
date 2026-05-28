@@ -711,6 +711,18 @@ if(id==='expert'){renderExpertList();genStockTabs('expert-tabs','switchExpertSto
 var wl = getWatchlist();
 if(wl.length){ currentKlineCode=wl[0].code; currentPredCode=wl[0].code; currentExpertStock=wl[0].code; }}
 if(id==='manage')refreshWatchlistUI();
+// Re-render charts for trades/positions/fees (data may not have been ready during init)
+if(id==='trades'){try{
+ var posData=DATA.positions||{}, allTrades=(posData.all_trades||DATA.trades||[]);
+ renderTimeline(allTrades);
+}catch(e){console.warn('trades render:',e);}}
+if(id==='positions'){try{
+ renderFeeChart(DATA.feeByStock||{});
+}catch(e){console.warn('pos render:',e);}}
+if(id==='fees'){try{
+ var posData2=DATA.positions||{}, allTrades2=(posData2.all_trades||DATA.trades||[]);
+ renderFeeTrend(allTrades2);
+}catch(e){console.warn('fee render:',e);}}
 }
 
 // ===== 导航菜单交互 =====
@@ -865,6 +877,8 @@ if(!DATA||!DATA.watchlist.length){
 
 if(st&&hasAPI()) st.innerHTML='<span style="color:#16a34a">已连接</span> - 端口8765，监控'+DATA.watchlist.length+'只股票';
 
+// Wrap rendering in try/catch to prevent blank pages from silent errors
+try{
 // trades and sea already loaded via var at Promise.all; extract only legacy-compat fields from DATA
 const D=DATA, q=D.quotes||{}, cp=(D.positions||D).current_positions||{}, cl=(D.positions||D).closed_positions||{};
 // Null-safe fallbacks for API-sourced data
@@ -971,6 +985,7 @@ document.getElementById('fee-table').innerHTML=feeHtml;
 
 renderFeeChart(feeByStock);
 renderFeeTrend(trades);
+}catch(e){console.warn('[init] render failed:',e.message);}
 
 // 预测
 var _pc = _firstWatchCode(); if(_pc) renderIntelligence(_pc);
@@ -1072,35 +1087,47 @@ return result;
 }
 
 function renderTimeline(trades){
+var chartEl=document.getElementById('timelineChart');
+if(!chartEl)return;
+if(!trades||!trades.length){
+ if(timelineChartInst)timelineChartInst.destroy();
+ timelineChartInst=null; return;
+}
 const byDate={};
-trades.forEach(t=>{
-const m=t.date.substring(0,7);
-if(!byDate[m])byDate[m]={buy:0,sell:0,div:0};
-if(t.type==='证券买入')byDate[m].buy+=Math.abs(t.settlement);
-else if(t.type==='证券卖出')byDate[m].sell+=Math.abs(t.settlement);
-else if(t.type==='股息入账')byDate[m].div+=Math.abs(t.settlement);
+trades.forEach(function(t){
+ if(!t||!t.date)return;
+ const m=t.date.substring(0,7);
+ if(!byDate[m])byDate[m]={buy:0,sell:0,div:0};
+ if(t.type==='证券买入')byDate[m].buy+=Math.abs(t.settlement||0);
+ else if(t.type==='证券卖出')byDate[m].sell+=Math.abs(t.settlement||0);
+ else if(t.type==='股息入账')byDate[m].div+=Math.abs(t.settlement||0);
 });
 const labels=Object.keys(byDate).sort();
+if(!labels.length){if(timelineChartInst)timelineChartInst.destroy();timelineChartInst=null;return;}
 if(timelineChartInst)timelineChartInst.destroy();
-timelineChartInst=new Chart(document.getElementById('timelineChart'),{
+timelineChartInst=new Chart(chartEl,{
 type:'bar',
 data:{labels,datasets:[
-{label:'买入(万)',data:labels.map(l=>+(byDate[l].buy/10000).toFixed(2)),backgroundColor:'#3b82f6'},
-{label:'卖出(万)',data:labels.map(l=>+(byDate[l].sell/10000).toFixed(2)),backgroundColor:'#f59e0b'},
-// 分红是收益，用红色
-{label:'分红(万)',data:labels.map(l=>+(byDate[l].div/10000).toFixed(2)),backgroundColor:'#dc2626'}
+{label:'买入(万)',data:labels.map(function(l){return +(byDate[l].buy/10000).toFixed(2);}),backgroundColor:'#3b82f6'},
+{label:'卖出(万)',data:labels.map(function(l){return +(byDate[l].sell/10000).toFixed(2);}),backgroundColor:'#f59e0b'},
+{label:'分红(万)',data:labels.map(function(l){return +(byDate[l].div/10000).toFixed(2);}),backgroundColor:'#dc2626'}
 ]},
-options:{responsive:true,maintainAspectRatio:false,scales:{x:{stacked:false},y:{ticks:{callback:v=>v+'万'}}},plugins:{legend:{position:'top'}}}
+options:{responsive:true,maintainAspectRatio:false,scales:{x:{stacked:false},y:{ticks:{callback:function(v){return v+'万';}}}},plugins:{legend:{position:'top'}}}
 });
 }
 
 function renderFeeChart(feeByStock){
-const labels=[],commission=[],stamp=[],other=[];
-for(const[code,f] of Object.entries(feeByStock)){
-labels.push(f.name);
-commission.push(f.commission);
-stamp.push(f.stamp);
-other.push(f.other);
+var chartEl=document.getElementById('feeChart');
+if(!chartEl)return;
+if(!feeByStock){if(feeChartInst)feeChartInst.destroy();feeChartInst=null;return;}
+var keys=Object.keys(feeByStock);
+if(!keys.length){if(feeChartInst)feeChartInst.destroy();feeChartInst=null;return;}
+var cTotal=0,sTotal=0,oTotal=0;
+for(var k=0;k<keys.length;k++){
+ var f=feeByStock[keys[k]];
+ cTotal+=f.commission||0;
+ sTotal+=f.stamp_tax||f.stamp||0;
+ oTotal+=f.other||0;
 }
 if(feeChartInst)feeChartInst.destroy();
 feeChartInst=new Chart(document.getElementById('feeChart'),{
@@ -1111,12 +1138,16 @@ options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bo
 }
 
 function renderFeeTrend(trades){
+var chartEl=document.getElementById('feeTrendChart');
+if(!chartEl)return;
+if(!trades||!trades.length){if(feeTrendChartInst)feeTrendChartInst.destroy();feeTrendChartInst=null;return;}
 const byMonth={};
-trades.forEach(t=>{
-const m=t.date.substring(0,7);
-if(!byMonth[m])byMonth[m]={commission:0,stamp:0,other:0};
-byMonth[m].commission+=t.commission;
-byMonth[m].stamp+=t.stamp;
+trades.forEach(function(t){
+ if(!t||!t.date)return;
+ const m=t.date.substring(0,7);
+ if(!byMonth[m])byMonth[m]={commission:0,stamp:0};
+ byMonth[m].commission+=t.commission||0;
+ byMonth[m].stamp+=t.stamp_tax||t.stamp||0;
 });
 const labels=Object.keys(byMonth).sort();
 if(feeTrendChartInst)feeTrendChartInst.destroy();
