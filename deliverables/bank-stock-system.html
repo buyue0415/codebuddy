@@ -1036,6 +1036,7 @@ if(klineAutoFit) klineAutoFit.addEventListener('click',function(){
 }
 
 function renderKline(code){
+try{
 const D=DATA, klineRaw=D.kline_daily&&D.kline_daily[code]||D.kline&&D.kline[code]||[], mc=D['monthly_changes_'+code]||[];
 const name=getStockName(code);
 document.getElementById('kline-title').textContent=name+' 日K走势';
@@ -1069,6 +1070,7 @@ options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:fals
 });
 }
 
+}catch(e){console.warn('[renderKline]',e.message);}
 function switchKline(code){
 currentKlineCode=code;
 document.querySelectorAll('#page-kline .tab-btn').forEach(b=>b.classList.remove('active'));
@@ -1087,6 +1089,7 @@ return result;
 }
 
 function renderTimeline(trades){
+try{
 var chartEl=document.getElementById('timelineChart');
 if(!chartEl)return;
 if(!trades||!trades.length){
@@ -1116,6 +1119,7 @@ options:{responsive:true,maintainAspectRatio:false,scales:{x:{stacked:false},y:{
 });
 }
 
+}catch(e){console.warn('[renderTimeline]',e.message);}
 function renderFeeChart(feeByStock){
 var chartEl=document.getElementById('feeChart');
 if(!chartEl)return;
@@ -1138,6 +1142,7 @@ options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bo
 }
 
 function renderFeeTrend(trades){
+try{
 var chartEl=document.getElementById('feeTrendChart');
 if(!chartEl)return;
 if(!trades||!trades.length){if(feeTrendChartInst)feeTrendChartInst.destroy();feeTrendChartInst=null;return;}
@@ -1160,7 +1165,7 @@ data:{labels,datasets:[
 ]},
 options:{responsive:true,maintainAspectRatio:false,scales:{x:{stacked:true},y:{stacked:true,ticks:{callback:v=>v+'元'}}},plugins:{legend:{position:'top'}}}
 });
-}
+}catch(e){console.warn('[renderFeeTrend]',e.message);}
 
 
 function switchExpertStock(code){
