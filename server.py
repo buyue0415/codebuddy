@@ -29,35 +29,69 @@ CACHE_TTL = 5
 # No global DB connection — each db_helper function opens its own
 # connection with WAL mode and busy_timeout for thread safety.
 
-# Tables to clean up when removing a stock from watchlist
-# NOTE: prediction_hourly/prediction_signals use pred_id (not code column),
-#       expert_reports has no code column — handled separately below.
-_CLEANUP_TABLES = [
+# ─── 安全删除机制：分析层 / 交易层 隔离 ───
+# 分析层（可清理）：自选股删除时，这些缓存/分析数据可安全清除
+_ANALYTICAL_TABLES = [
     "kline_daily", "kline_monthly", "daily_predictions",
     "seasonal", "learning_params", "accuracy_stats",
-    "dividends", "quotes", "news", "positions",
-    "closed_positions", "trades",
+    "quotes", "news",
+]
+# 交易层（受保护）：对账单导入模块的历史/持仓数据，NEVER 随自选股删除而清除
+# 包括: positions, closed_positions, trades, dividends
+# 这些数据来自券商对账单，代表真实资金流水，必须在整个生命周期中保持完整
+_BROKER_TABLES = [
+    "positions", "closed_positions", "trades", "dividends",
 ]
 
 def _cleanup_stock_data(code):
-    """Delete all data for a stock from the database (watchlist cleanup + related tables)."""
-    import sqlite3
+    """删除自选股时，安全清除分析层数据，完整保留交易层数据。
+
+    安全隔离机制：
+      - 分析层（kline / predictions / seasonal / quotes / news / expert）：可清除
+      - 交易层（positions / trades / dividends）：永不删除，保障对账单数据完整
+      - expert_reports: JSON blob 单股清理（report_data 内移除该股票的 entries）
+    """
+    import sqlite3, json
     db = sqlite3.connect(os.path.join(ROOT, "data", "stock.db"), timeout=10)
     db.execute("PRAGMA journal_mode=WAL")
     db.execute("PRAGMA busy_timeout=5000")
     db.execute("UPDATE stocks SET watchlist=0 WHERE code=?", [code])
     db.execute("DELETE FROM watchlist WHERE code=?", [code])
-    for tbl in _CLEANUP_TABLES:
+
+    # ── 分析层清理 ──
+    for tbl in _ANALYTICAL_TABLES:
         db.execute(f"DELETE FROM {tbl} WHERE code=?", [code])
-    # prediction_hourly and prediction_signals use pred_id (no code column)
+    # prediction_hourly / prediction_signals 使用 pred_id（无 code 列）
     db.execute(
         "DELETE FROM prediction_hourly WHERE pred_id IN "
         "(SELECT id FROM daily_predictions WHERE code=?)", [code])
     db.execute(
         "DELETE FROM prediction_signals WHERE pred_id IN "
         "(SELECT id FROM daily_predictions WHERE code=?)", [code])
+
+    # ── expert_reports 单股清理（JSON blob 格式） ──
+    rows = db.execute("SELECT id, report_data FROM expert_reports").fetchall()
+    for row_id, report_data in rows:
+        try:
+            data = json.loads(report_data)
+            stocks = data.get("stocks", {})
+            if code in stocks:
+                del stocks[code]
+                if stocks:
+                    db.execute("UPDATE expert_reports SET report_data=? WHERE id=?",
+                               [json.dumps(data, ensure_ascii=False), row_id])
+                else:
+                    # 这是该报告唯一的股票 → 删除整条报告
+                    db.execute("DELETE FROM expert_reports WHERE id=?", [row_id])
+        except (json.JSONDecodeError, KeyError, TypeError):
+            continue
+
     db.commit()
     db.close()
+
+    # ── 交易层数据：不做任何修改，保留完整 ──
+    # positions / closed_positions / trades / dividends 保留不动
+
     _invalidate_init_cache()
 
 
@@ -631,12 +665,20 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
 
                 ok1, out1 = run_script("sync_all.py", 120)
                 _invalidate_init_cache()
-                json_response(self, {
-                    "success": ok1,
-                    "message": f"已添加 {name}({code})，全模块数据同步完成" if ok1 else "添加失败",
-                    "watchlist": wl if DB_AVAILABLE else [],
-                    "output": out1[-500:] if out1 else "",
-                })
+                if ok1:
+                    json_response(self, {
+                        "success": True,
+                        "message": f"已添加 {name}({code})，全模块数据同步完成",
+                        "watchlist": wl if DB_AVAILABLE else [],
+                        "output": out1[-500:] if out1 else "",
+                    })
+                else:
+                    json_response(self, {
+                        "success": False,
+                        "error": f"数据同步失败: {code}",
+                        "message": f"股票已添加到自选股，但数据同步失败。请手动点击'刷新数据'按钮",
+                        "output": out1[-500:] if out1 else "",
+                    })
 
             elif path == "/api/watchlist/add":
                 code = params.get("code", "").strip()
@@ -656,12 +698,20 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
                 # Initialize data for new stock — sync ALL modules
                 ok1, out1 = run_script("sync_all.py", 120)
                 _invalidate_init_cache()
-                json_response(self, {
-                    "success": ok1,
-                    "message": f"已添加 {name}({code})，全模块数据同步完成" if ok1 else "添加失败",
-                    "watchlist": [dict(r) for r in get_watchlist()] if DB_AVAILABLE else [],
-                    "output": out1[-500:] if out1 else "",
-                })
+                if ok1:
+                    json_response(self, {
+                        "success": True,
+                        "message": f"已添加 {name}({code})，全模块数据同步完成",
+                        "watchlist": [dict(r) for r in get_watchlist()] if DB_AVAILABLE else [],
+                        "output": out1[-500:] if out1 else "",
+                    })
+                else:
+                    json_response(self, {
+                        "success": False,
+                        "error": f"数据同步失败: {code}",
+                        "message": "股票已加自选，但数据同步失败。请手动点击'刷新数据'",
+                        "output": out1[-500:] if out1 else "",
+                    })
 
             elif path == "/api/watchlist/remove":
                 code = params.get("code", "").strip()
@@ -690,13 +740,22 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
                 })
 
             elif path == "/api/trigger/update_statement":
-                ok, out = run_script("update_from_statement.py", 30)
-                ok2, out2 = run_script("reinject_from_db.py", 15)
-                json_response(self, {
-                    "success": ok and ok2,
-                    "output": out[-1000:] if out else "",
-                    "message": "持仓数据已更新，刷新页面查看" if ok else "更新失败",
-                })
+                ok, out = run_script("update_from_statement.py", 60)
+                ok2, out2 = run_script("reinject_from_db.py", 30)
+                if ok and ok2:
+                    json_response(self, {
+                        "success": True,
+                        "message": "持仓数据已更新，刷新页面查看",
+                        "output": out[-1000:] if out else "",
+                    })
+                else:
+                    err_msg = "解析失败" if not ok else "HTML注入失败"
+                    json_response(self, {
+                        "success": False,
+                        "error": err_msg + (" (update)" if not ok else " (reinject)"),
+                        "message": "对账单更新失败，请检查文件格式或重新上传",
+                        "output": out[-1000:] if out else "",
+                    })
 
             elif path == "/api/trigger/predict":
                 # Prevent concurrent refresh runs
@@ -736,9 +795,12 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
                 try:
                     from import_expert_report import import_report
                     ok, msg, warnings = import_report(report_json)
-                    json_response(self, {"success": ok, "message": msg, "warnings": warnings})
+                    resp = {"success": ok, "message": msg, "warnings": warnings}
+                    if not ok:
+                        resp["error"] = msg  # duplicate as error for frontend compatibility
+                    json_response(self, resp)
                 except Exception as e:
-                    json_response(self, {"success": False, "error": str(e)}, 500)
+                    json_response(self, {"success": False, "error": f"报告导入异常: {e}", "message": str(e)}, 500)
 
             elif path == "/api/expert/import":
                 self.path = "/api/v2/expert/import"
@@ -762,20 +824,35 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
             json_response(self, {"success": False, "error": str(e), "trace": traceback.format_exc()[-500:]}, 500)
 
     def _handle_statement_upload(self, content_length):
-        """Receive uploaded GF Securities statement xlsx, save and process"""
-        import shutil, email
+        """Receive uploaded GF Securities statement xlsx, validate, save and process.
+
+        Multi-layer format validation:
+          1. Content-Type header check (multipart/form-data)
+          2. Magic byte detection (true file type, not extension)
+          3. File size sanity check
+          4. Detailed diagnostics on failure
+        """
+        import shutil, email, sys, traceback, time
 
         content_type = self.headers.get("Content-Type", "")
         if "multipart/form-data" not in content_type:
-            json_response(self, {"success": False, "error": "需要 multipart/form-data"}, 400)
+            json_response(self, {
+                "success": False,
+                "error": "需要 multipart/form-data",
+                "message": "请通过页面上传按钮选择对账单文件，不要直接调用API",
+            }, 400)
             return
 
-        raw = self.rfile.read(content_length)
-        boundary = content_type.split("boundary=")[1].strip()
-        boundary_bytes = boundary.encode()
+        try:
+            raw = self.rfile.read(content_length)
+            boundary = content_type.split("boundary=")[1].strip()
+            boundary_bytes = boundary.encode()
+        except Exception as e:
+            json_response(self, {"success": False, "error": f"请求解析失败: {e}"}, 400)
+            return
 
-        parts = raw.split(b"--" + boundary_bytes)
-        for part in parts:
+        found_file = False
+        for part in raw.split(b"--" + boundary_bytes):
             if b"filename=" not in part:
                 continue
             header_end = part.find(b"\r\n\r\n")
@@ -788,26 +865,171 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
             else:
                 file_data = file_data.rstrip(b"\r\n-")
 
+            # ── 层1: 文件大小检查 ──
             if len(file_data) < 100:
-                continue
+                json_response(self, {
+                    "success": False,
+                    "error": "文件过小（可能为空或损坏）",
+                    "message": f"上传文件仅 {len(file_data)} 字节，请确认选择了正确的对账单文件",
+                }, 400)
+                return
 
+            # ── 层2: 魔数检测（真实文件类型，非扩展名） ──
+            magic = file_data[:8]
+            magic_hex = magic.hex()
+            detected_format = self._detect_file_format(magic)
+
+            if detected_format != "xlsx":
+                # 构建详细诊断信息
+                detail = self._format_diagnostic(magic, file_data, detected_format)
+                json_response(self, {
+                    "success": False,
+                    "error": detail["error"],
+                    "message": detail["message"],
+                    "diagnostics": detail,
+                }, 400)
+                return
+
+            # ── 层3: 无损坏——安全保存 ──
+            found_file = True
             dest = os.path.join(ROOT, "广发易淘金PC版-普通对账单结果查询.xlsx")
-            bak = dest + ".bak"
+
+            # 备份现有文件（仅在它是有效xlsx时保留）
             if os.path.exists(dest):
-                shutil.copy2(dest, bak)
+                with open(dest, 'rb') as check:
+                    old_magic = check.read(4)
+                if old_magic == b'PK\x03\x04':
+                    # 现有文件是有效xlsx → 安全备份
+                    bak = dest + f".bak_{int(time.time())}"
+                    shutil.copy2(dest, bak)
+                    bak_latest = dest + ".upload_bak"
+                    if os.path.exists(bak_latest):
+                        os.remove(bak_latest)
+                    shutil.copy2(dest, bak_latest)
+                else:
+                    # 现有文件已损坏 → 仅做一次性备份
+                    bak = dest + ".was_corrupted"
+                    shutil.copy2(dest, bak)
+
             with open(dest, "wb") as f:
                 f.write(file_data)
 
-            ok, out = run_script("update_from_statement.py", 30)
-            ok2, out2 = run_script("reinject_from_db.py", 15)
+            print(f"[INFO] 对账单已保存: {dest} ({len(file_data):,} bytes, magic OK)", file=sys.stderr)
+
+            # ── Step 1: 解析 Excel ──
+            ok, out = run_script("update_from_statement.py", 60)
+            if not ok:
+                json_response(self, {
+                    "success": False,
+                    "error": "对账单解析失败",
+                    "message": "Excel 文件可能损坏、列名不匹配或包含无效数据。详见输出日志。",
+                    "output": out[-500:] if out else "",
+                })
+                return
+
+            # ── Step 2: 注入 HTML ──
+            ok2, out2 = run_script("reinject_from_db.py", 30)
+            if not ok2:
+                # HTML注入失败，但SQLite已更新 → 部分成功
+                json_response(self, {
+                    "success": False,
+                    "error": "HTML 注入失败",
+                    "message": "持仓数据已解析并写入数据库，但页面未能自动更新。请手动运行 reinject_from_db.py。",
+                    "output": out2[-500:] if out2 else "",
+                })
+                return
+
             json_response(self, {
-                "success": ok and ok2,
-                "message": "对账单已更新，刷新页面查看" if ok else "解析失败",
+                "success": True,
+                "message": "对账单已更新，刷新页面查看",
                 "output": out[-500:] if out else "",
             })
             return
 
-        json_response(self, {"success": False, "error": "未找到上传文件"}, 400)
+        if not found_file:
+            json_response(self, {
+                "success": False,
+                "error": "未找到上传文件",
+                "message": "请选择广发对账单 .xlsx 文件后点击上传",
+            }, 400)
+
+    @staticmethod
+    def _detect_file_format(magic_bytes: bytes) -> str:
+        """从文件头魔数识别真实文件格式（不是扩展名）。"""
+        if magic_bytes[:4] == b'PK\x03\x04':
+            # 进一步检查是否是 Office Open XML
+            return "xlsx"  # 也可能是 docx/pptx，但在本例中只接受xlsx
+        if magic_bytes[:8] == b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1':
+            return "xls_ole"  # 旧版Excel格式
+        if magic_bytes[:4] == b'\x50\x4b\x03\x04':
+            return "xlsx"
+        if magic_bytes[:2] == b'\xff\xfe':
+            return "csv_utf16le"
+        if magic_bytes[:2] == b'\xfe\xff':
+            return "csv_utf16be"
+        if magic_bytes[:3] == b'\xef\xbb\xbf':
+            return "csv_utf8_bom"
+        if magic_bytes[0:1] == b'{':
+            # JSON — 可能是专家报告误上传
+            return "json"
+        if magic_bytes[0:1] == b'[':
+            return "json_array"
+        if magic_bytes[:5] == b'<?xml':
+            return "xml"
+        if magic_bytes[:4] == b'\x25\x50\x44\x46':  # %PDF
+            return "pdf"
+        # 尝试检测纯文本/CSV
+        try:
+            text = magic_bytes.decode('utf-8', errors='strict')
+            if ',' in text or '\t' in text:
+                return "csv_utf8"
+            return "text_utf8"
+        except UnicodeDecodeError:
+            pass
+        return "unknown"
+
+    @staticmethod
+    def _format_diagnostic(magic: bytes, data: bytes, detected: str) -> dict:
+        """生成详细的格式诊断信息。"""
+        magic_hex = magic[:8].hex()
+        preview = data[:200].decode('utf-8', errors='replace')
+
+        format_names = {
+            "xlsx": "Excel 2007+ (.xlsx)",
+            "xls_ole": "旧版 Excel 97-2003 (.xls)",
+            "json": "JSON 文本",
+            "json_array": "JSON 数组",
+            "csv_utf8": "CSV UTF-8",
+            "csv_utf8_bom": "CSV UTF-8 BOM",
+            "csv_utf16le": "CSV UTF-16 LE",
+            "csv_utf16be": "CSV UTF-16 BE",
+            "xml": "XML",
+            "pdf": "PDF",
+            "text_utf8": "纯文本 UTF-8",
+            "unknown": "未知二进制格式",
+        }
+        detected_name = format_names.get(detected, detected)
+
+        suggestions = {
+            "json": "您上传的是 JSON 文件（可能是专家分析报告），而非广发对账单。请从广发易淘金PC版导出对账单（.xlsx格式）后重新上传。",
+            "csv_utf8": "您上传的是 CSV/文本文件。请从广发易淘金PC版导出为 .xlsx 格式。",
+            "csv_utf8_bom": "您上传的是 CSV/文本文件（含 BOM 头）。请从广发易淘金PC版导出为 .xlsx 格式。",
+            "csv_utf16le": "您上传的是 UTF-16 编码的 CSV 文件。请从广发易淘金PC版导出为 .xlsx 格式。",
+            "xls_ole": "您上传的是旧版 .xls 格式（Excel 97-2003）。请另存为 .xlsx 格式后上传。",
+            "pdf": "您上传的是 PDF 文件，不是对账单。请上传.xlsx格式。",
+        }
+
+        return {
+            "error": f"文件格式不匹配: 检测到 {detected_name}，需要 .xlsx",
+            "message": suggestions.get(detected,
+                      f"上传文件的实际格式为 {detected_name}，但系统需要广发对账单 .xlsx 格式。请检查文件选择是否正确。"),
+            "detected_format": detected,
+            "detected_format_name": detected_name,
+            "expected_format": "xlsx",
+            "magic_hex": magic_hex,
+            "file_size": len(data),
+            "preview": preview[:100],
+        }
 
     def _serve_db_viewer(self):
         import sqlite3
