@@ -247,7 +247,8 @@ try:
         get_config, _calc_fees, get_current_positions, get_closed_positions,
         get_trades, get_dividends, get_all_kline_daily, get_all_kline_monthly,
         get_all_predictions, get_all_seasonal, get_all_accuracy_stats,
-        get_all_monthly_changes, get_all_learning_params)
+        get_all_monthly_changes, get_all_learning_params,
+        get_dividend_yield_series)
     DB_AVAILABLE = True
 except ImportError:
     DB_AVAILABLE = False
@@ -682,6 +683,19 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
                 json_response(self, {"success": True, "data": data, "count": len(data)})
             except Exception as e:
                 json_response(self, {"success": False, "error": str(e)}, 500)
+
+        elif path == "/api/v2/dividend-yield-series":
+            q = urllib.parse.parse_qs(parsed.query)
+            code = q.get("code", [None])[0]
+            if not code:
+                json_response(self, {"success": False, "error": "code required"}, 400)
+            else:
+                try:
+                    data = get_dividend_yield_series(code) if DB_AVAILABLE else {}
+                    has_data = bool(data.get("labels"))
+                    json_response(self, {"success": True, "data": data, "has_data": has_data})
+                except Exception as e:
+                    json_response(self, {"success": False, "error": str(e)}, 500)
 
         # Batch kline endpoints (no code = all watchlist stocks)
         elif path == "/api/v2/kline/daily":

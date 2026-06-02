@@ -542,9 +542,16 @@ def main():
                 print(f"  DB write monthly kline {code} failed: {e}")
         if code in kline_results and kline_results[code]:
             latest = kline_results[code][0]
+            price = latest[2]
+            # Calculate dividend yield from dividends table (same logic as refresh_quotes.py)
             try:
-                upsert_quotes({code: {'price': latest[2], 'change': 0, 'open': latest[1],
-                                      'high': latest[3], 'low': latest[4], 'pe': 0, 'pb': 0, 'dy': 0}})
+                from refresh_quotes import calc_dividend_yield
+                dy = calc_dividend_yield(code, price)
+            except Exception:
+                dy = 0
+            try:
+                upsert_quotes({code: {'price': price, 'change': 0, 'open': latest[1],
+                                      'high': latest[3], 'low': latest[4], 'pe': 0, 'pb': 0, 'dy': dy}})
             except Exception as e:
                 print(f"  DB write quote {code} failed: {e}")
 

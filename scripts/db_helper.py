@@ -577,3 +577,211 @@ def upsert_positions(current_positions, closed_positions, all_trades):
         db.execute("INSERT INTO trades(date,time,code,name,type,qty,price,commission,stamp_tax,settlement) VALUES(?,?,?,?,?,?,?,?,?,?)",
             [t['date'], t.get('time',''), t['code'], t['name'], t['type'], int(t['qty']), t['price'], t.get('commission',0), t.get('stamp_tax',0), t['settlement']])
     db.commit(); db.close()
+
+
+def _estimate_dividends_from_kline(code: str) -> list:
+    """Estimate dividend events from ex-dividend price gaps in daily K-line.
+
+    When a stock goes ex-dividend (除权除息), the opening price typically gaps
+    down by the dividend per share. Detects such gaps by comparing against the
+    stock's own historical volatility to filter out normal price movements.
+
+    Filters (in order of application):
+      1. Gap range: -0.5% to -10% (dividend range, exclude crashes/splits)
+      2. Per-share sanity: 0.01 ~ 5.0 元
+      3. Statistical: gap > 2x 20-day avg absolute daily change (outlier)
+      4. Recovery: next day close > ex-div open (gap not a trend start)
+      5. Uniqueness: at most 1 gap per 30 days (yearly dividends)
+    """
+    from datetime import datetime
+
+    db = get_db()
+    db.row_factory = sqlite3.Row
+
+    rows = db.execute(
+        "SELECT date, open, close FROM kline_daily WHERE code=? ORDER BY date ASC",
+        [code]
+    ).fetchall()
+    db.close()
+
+    n = len(rows)
+    if n < 30:
+        return []
+
+    # Pre-compute daily change% and 20-day avg absolute change
+    daily_chg = []
+    for i in range(1, n):
+        pc = rows[i - 1]['close']
+        to_ = rows[i]['open']
+        if pc and pc > 0:
+            daily_chg.append((to_ - pc) / pc * 100)
+        else:
+            daily_chg.append(0)
+
+    # Rolling 20-day avg absolute change
+    avg_abs_chg = []
+    for i in range(len(daily_chg)):
+        window = daily_chg[max(0, i - 20):i + 1]
+        avg_abs_chg.append(sum(abs(v) for v in window) / len(window))
+
+    estimated = []
+    skip_last = 5
+
+    for i in range(1, n - skip_last):
+        prev_close = rows[i - 1]['close']
+        today_open = rows[i]['open']
+        today_date = rows[i]['date']
+
+        if not prev_close or prev_close <= 0 or not today_open or today_open <= 0:
+            continue
+
+        gap_pct = (today_open - prev_close) / prev_close * 100
+
+        # Filter 1: gap range
+        if not (-10 < gap_pct < -0.5):
+            continue
+
+        # Filter 2: per-share sanity
+        est_per_share = abs(gap_pct) / 100 * prev_close
+        if not (0.01 <= est_per_share <= 5.0):
+            continue
+
+        # Filter 3: statistically significant vs own history
+        avg_chg = avg_abs_chg[i - 1] if i > 0 else 0
+        if abs(gap_pct) < max(avg_chg * 2, 0.8):
+            continue
+
+        # Filter 4: recovery check (next day should not continue falling)
+        if i + 1 < n:
+            next_close = rows[i + 1]['close']
+            if next_close and next_close < today_open:
+                continue
+
+        # Filter 5: no other gap within 30 days
+        if estimated:
+            try:
+                last_dt = datetime.strptime(estimated[-1]['date'], '%Y-%m-%d')
+                this_dt = datetime.strptime(today_date, '%Y-%m-%d')
+                if (this_dt - last_dt).days < 30:
+                    continue
+            except ValueError:
+                pass
+
+        estimated.append({
+            'date': today_date,
+            'per_share': round(est_per_share, 4),
+            'amount': round(est_per_share, 2)
+        })
+
+    return estimated
+
+
+def get_dividend_yield_series(code: str) -> dict:
+    """Compute daily dividend yield time-series for a single stock.
+
+    Uses EXACTLY the same TTM logic as calc_dividend_yield() in
+    refresh_quotes.py to guarantee consistency between the position
+    page dy value and the K-line trend chart.
+
+    Falls back to estimating dividends from K-line ex-dividend gaps
+    when no explicit dividend records exist.
+
+    Returns:
+        {
+            "labels":       [date_str, ...],           # oldest-first
+            "dy_series":    [dy_value_or_None, ...],
+            "close_prices": [close_price, ...],
+            "dividend_events": [{"date","per_share","amount"}, ...]
+        }
+    """
+    from datetime import datetime, timedelta
+    import sqlite3
+
+    db = get_db()
+    db.row_factory = sqlite3.Row
+
+    # Load daily K-line (oldest-first for time-series alignment)
+    kline_rows = db.execute(
+        "SELECT date, close FROM kline_daily WHERE code=? ORDER BY date ASC",
+        [code]
+    ).fetchall()
+
+    if not kline_rows:
+        db.close()
+        return {"labels": [], "dy_series": [], "close_prices": [],
+                "dividend_events": []}
+
+    labels = [r['date'] for r in kline_rows]
+    closes = [r['close'] for r in kline_rows]
+
+    # Load dividends with properly computed per_share (record_date offset in get_dividends)
+    divs = get_dividends(code)
+
+    # Build sorted dividend timeline (oldest-first)
+    div_timeline = []
+    for d in divs:
+        if d['per_share'] > 0:
+            div_timeline.append({
+                'date': d['date'],
+                'per_share': d['per_share'],
+                'amount': d['amount']
+            })
+    div_timeline.sort(key=lambda x: x['date'])
+
+    # If no dividend records, estimate from ex-dividend price gaps in K-line
+    if not div_timeline:
+        estimated = _estimate_dividends_from_kline(code)
+        if estimated:
+            div_timeline = estimated
+
+    # Compute dy for each trading day (same formula as calc_dividend_yield)
+    if not div_timeline:
+        dy_series = [None] * len(labels)
+    else:
+        dy_series = []
+        for date_str, close in zip(labels, closes):
+            if not close or close <= 0:
+                dy_series.append(None)
+                continue
+
+            # TTM window: date - 365 days (matching timedelta(days=365))
+            try:
+                dt = datetime.strptime(date_str, '%Y-%m-%d')
+                cutoff = dt - timedelta(days=365)
+                cutoff_str = cutoff.strftime('%Y-%m-%d')
+            except (ValueError, TypeError):
+                dy_series.append(None)
+                continue
+
+            # Sum per_share dividends within the TTM window
+            ttm_sum = 0.0
+            for div in div_timeline:
+                if div['date'] > date_str:
+                    break
+                if div['date'] >= cutoff_str:
+                    ttm_sum += div['per_share']
+
+            if ttm_sum > 0:
+                dy = round(ttm_sum / close * 100, 2)
+                dy_series.append(dy)
+            else:
+                dy_series.append(None)
+
+    # Build dividend events list from div_timeline (includes estimated)
+    dividend_events = [
+        {'date': d['date'], 'per_share': d['per_share'], 'amount': d['amount']}
+        for d in div_timeline
+    ]
+
+    # Determine if dividends are estimated (from K-line gaps) vs real records
+    real_divs = [d for d in divs if d['per_share'] > 0]
+    is_estimated = not real_divs and bool(div_timeline)
+
+    db.close()
+    return {
+        "labels": labels,
+        "dy_series": dy_series,
+        "close_prices": closes,
+        "dividend_events": dividend_events,
+        "estimated": is_estimated
+    }

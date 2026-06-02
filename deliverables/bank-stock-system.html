@@ -98,9 +98,7 @@ tr:hover td{background:#f8fafc}
 .news-date{min-width:80px;font-size:12px;color:#6b7280;padding-top:2px}
 .news-body{flex:1}
 .news-title{font-size:14px;font-weight:600;color:#1f2937;margin-bottom:4px}
-.news-title .stock-tag{font-size:11px;padding:1px 6px;border-radius:3px;margin-right:6px;font-weight:600}
-.news-title .tag-601166{background:#dbeafe;color:#1e40af}
-.news-title .tag-600036{background:#fef3c7;color:#92400e}
+.news-title .stock-tag{font-size:11px;padding:1px 6px;border-radius:3px;margin-right:6px;font-weight:600;background:#e0e7ff;color:#3730a3}
 .news-summary{font-size:13px;color:#6b7280;margin-top:4px;line-height:1.5}
 .news-source{font-size:11px;color:#9ca3af;margin-top:4px}
 .news-item.major{background:#fffbeb;border-radius:8px;padding:14px;margin:4px -8px;border-left:3px solid #f59e0b}
@@ -428,6 +426,11 @@ tr:hover td{background:#f8fafc}
 <div class="chart-box" style="height:300px"><canvas id="monthlyChart"></canvas></div>
 </div>
 <div class="card">
+<h2 id="dy-title">股息率走势 (TTM)</h2>
+<div class="chart-box" style="height:220px"><canvas id="dividendYieldChart"></canvas></div>
+<div id="dy-hint" style="font-size:11px;color:#9ca3af;margin-top:6px;text-align:center">滚轮平移 ｜ Ctrl+滚轮缩放</div>
+</div>
+<div class="card">
 <h2>季节性规律（月均涨跌幅 %）</h2>
 <div class="chart-box" style="height:280px"><canvas id="seasonalChart"></canvas></div>
 </div>
@@ -726,7 +729,7 @@ async function loadData(key, endpoint){
 }
 
 
-let klineChartInst, monthlyChartInst, seasonalChartInst, predChartInst, timelineChartInst, feeChartInst, feeTrendChartInst;
+let klineChartInst, monthlyChartInst, seasonalChartInst, predChartInst, timelineChartInst, feeChartInst, feeTrendChartInst, dividendYieldChartInst;
 
 function getStockName(code){
 if(!DATA||!DATA.watchlist)return code;
@@ -1113,11 +1116,12 @@ var onKlineMove=function(e){
  if(left+bw>rect.width-4)left=mx-bw-16;if(left<4)left=4;if(top<4)top=4;if(top+bh>rect.height-4)top=rect.height-bh-4;
  klineTT.style.left=left+'px';klineTT.style.top=top+'px';
  window._klineCrossX=dotX;klineChartInst.draw();
+ if(dividendYieldChartInst)dividendYieldChartInst.draw();
 };
 if(window._klineMoveFn)klineCanvas.removeEventListener('mousemove',window._klineMoveFn);
 if(window._klineLeaveFn)klineCanvas.removeEventListener('mouseleave',window._klineLeaveFn);
 window._klineMoveFn=onKlineMove;
-window._klineLeaveFn=function(){klineTT.style.display='none';window._klineCrossX=null;if(klineChartInst)klineChartInst.draw();};
+window._klineLeaveFn=function(){klineTT.style.display='none';var dyT=document.getElementById('dy-tooltip');if(dyT)dyT.style.display='none';window._klineCrossX=null;if(klineChartInst)klineChartInst.draw();if(dividendYieldChartInst)dividendYieldChartInst.draw();};
 klineCanvas.addEventListener('mousemove',onKlineMove);
 klineCanvas.addEventListener('mouseleave',window._klineLeaveFn);
 
@@ -1160,6 +1164,197 @@ type:'bar',
 data:{labels:seaLabels,datasets:[{label:'月均涨跌幅%',data:seaData,backgroundColor:seaColors}]},
 options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{ticks:{callback:v=>v+'%'}}}}
 });
+
+
+// ===== 股息率走势图 (TTM Daily Dividend Yield) — 后端统一计算 =====
+document.getElementById('dy-title').textContent=name+' 股息率走势 (TTM)';
+
+var dyCanvas=document.getElementById('dividendYieldChart');
+var dyHint=document.getElementById('dy-hint');
+if(dividendYieldChartInst){dividendYieldChartInst.destroy();dividendYieldChartInst=null;}
+
+// Show loading state
+dyHint.textContent='正在加载股息率数据...';
+dyHint.style.color='#6b7280';
+
+// Fetch dividend yield series from backend (same logic as position page dy)
+if(hasAPI()){
+ apiCall('GET','/api/v2/dividend-yield-series?code='+encodeURIComponent(code)).then(function(resp){
+  if(!resp||!resp.success){
+   dyHint.textContent='股息率数据加载失败: '+(resp&&resp.error||'请重启服务器');
+   dyHint.style.color='#dc2626';
+   setupKlineZoomPan(labels, klineCanvas, dyCanvas, klineChartInst, null);
+   return;
+  }
+  var ds=resp.data;
+  var dyLabels=ds.labels||[];
+  var dySeries=ds.dy_series||[];
+  var dyCloses=ds.close_prices||[];
+  var dyEvents=ds.dividend_events||[];
+  var dyEstimated=ds.estimated||false;
+  var hasDivs=dyEvents.length>0;
+
+  // Fallback: ONLY if no events AND no estimation, use quotes.dy
+  if(!hasDivs && !dyEstimated){
+   var quotesDy=(DATA.quotes[code]&&DATA.quotes[code].dy)||0;
+   dySeries=dyLabels.map(function(){return quotesDy;});
+  }
+
+  // Build dividend event lookup for date-based matching
+  var dyDivLookup={};
+  dyEvents.forEach(function(e){dyDivLookup[e.date]=e;});
+
+  // Dividend event marker points
+  var dyEventPts=dyLabels.map(function(d,i){return dyDivLookup[d]&&dySeries[i]!=null?dySeries[i]:null;});
+
+  // Create chart
+  if(dividendYieldChartInst)dividendYieldChartInst.destroy();
+  var dyBorderClr=hasDivs&&!dyEstimated?'#dc2626':'rgba(220,38,38,.5)';
+  var dyBgClr=hasDivs&&!dyEstimated?'rgba(220,38,38,0.07)':'rgba(220,38,38,0.02)';
+  var dyDash=hasDivs&&!dyEstimated?[]:[6,4];
+  var dyLabel=hasDivs&&!dyEstimated?'股息率(TTM)':'股息率(预估)';
+  dividendYieldChartInst=new Chart(dyCanvas,{
+   type:'line',
+   data:{labels:dyLabels,datasets:[
+    {label:dyLabel,data:dySeries,borderColor:dyBorderClr,
+     backgroundColor:dyBgClr,fill:true,borderWidth:hasDivs?2:1.5,
+     pointRadius:0,tension:0.2,spanGaps:false,borderDash:dyDash},
+    hasDivs?{label:'分红除权',data:dyEventPts,borderColor:'#dc2626',
+     backgroundColor:'#dc2626',pointRadius:7,pointStyle:'triangle',
+     showLine:false,pointBorderWidth:0}:null
+   ].filter(Boolean)},
+   options:{
+    responsive:true,maintainAspectRatio:false,
+    plugins:{legend:{position:'top',labels:{usePointStyle:true,font:{size:11}}},tooltip:{enabled:false}},
+    scales:{
+     x:{ticks:{maxTicksLimit:12,font:{size:10}}},
+     y:{ticks:{callback:function(v){return v.toFixed(1)+'%';},font:{size:10}},
+      title:{display:true,text:'股息率 %',font:{size:10}}}
+    }
+   }
+  });
+
+  // Crosshair plugin
+  var dyCrossPlugin={id:'dyCross',afterDraw:function(chart){
+   if(!window._klineCrossX)return;
+   var ctx=chart.ctx,ra=chart.scales.y;
+   ctx.save();ctx.setLineDash([4,3]);
+   ctx.strokeStyle='rgba(220,38,38,.25)';ctx.lineWidth=1;
+   ctx.beginPath();ctx.moveTo(window._klineCrossX,ra.top);
+   ctx.lineTo(window._klineCrossX,ra.bottom);ctx.stroke();ctx.restore();
+  }};
+  dividendYieldChartInst.config.plugins=[dyCrossPlugin];
+
+  // Custom tooltip
+  var dyTT=document.getElementById('dy-tooltip');
+  if(!dyTT){
+   dyTT=document.createElement('div');dyTT.id='dy-tooltip';
+   dyTT.style.cssText='position:absolute;pointer-events:none;background:rgba(0,0,0,.88);color:#fff;padding:10px 14px;border-radius:8px;font-size:12px;line-height:1.8;z-index:200;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.3);display:none;font-family:-apple-system,PingFang SC,Microsoft YaHei,sans-serif';
+   dyCanvas.parentElement.appendChild(dyTT);
+  }
+  var onDyMove=function(e){
+   var chart=dividendYieldChartInst;if(!chart||!chart.scales)return;
+   var rect=dyCanvas.getBoundingClientRect();
+   var mx=e.clientX-rect.left,my=e.clientY-rect.top;
+   var xs=chart.scales.x,ys=chart.scales.y;
+   if(mx<xs.left||mx>xs.right||my<ys.top||my>ys.bottom){dyTT.style.display='none';return;}
+   var idx=Math.round(xs.getValueForPixel(mx));
+   if(idx<0||idx>=dyLabels.length){dyTT.style.display='none';return;}
+   var date=dyLabels[idx];
+   var dyVal=dySeries[idx];
+   var closePr=dyCloses[idx];
+   var dv=dyDivLookup[date];
+
+   // Sync crosshair to K-line
+   if(klineChartInst&&klineChartInst.scales){
+    var kxs=klineChartInst.scales.x;
+    var klineLabels=klineChartInst.data.labels;
+    var ki=klineLabels.indexOf(date);
+    if(ki>=0){window._klineCrossX=kxs.getPixelForValue(ki);klineChartInst.draw();dividendYieldChartInst.draw();}
+   }
+   var dyStr=dyVal!=null?'<span style="color:#f87171;font-weight:700">'+dyVal.toFixed(2)+'%</span>':'--';
+   var html='<div style="font-weight:600;margin-bottom:4px;color:#fbbf24">'+date+'</div>';
+   html+='<div>股息率: '+dyStr+'</div>';
+   html+='<div>收盘价: <span style="color:#93c5fd">'+fmt(closePr)+'</span></div>';
+   if(dv){
+    html+='<div style="margin-top:5px;border-top:2px solid #dc2626;padding-top:5px;font-size:13px;line-height:1.8">';
+    html+='<span style="color:#f87171">▼ 分红除权日</span>';
+    html+='<div>到账: <span style="color:#34d399;font-weight:700">'+fmt(dv.amount)+'</span> 元</div>';
+    html+='<div>每股: <span style="color:#60a5fa;font-weight:700">'+fmt(dv.per_share||0)+'</span> 元</div>';
+    html+='</div>';
+   }
+   dyTT.innerHTML=html;dyTT.style.display='block';
+   var bw=dyTT.offsetWidth||150,bh=dyTT.offsetHeight||100;
+   var left=mx+16,top=my-bh/2;
+   if(left+bw>rect.width-4)left=mx-bw-16;if(left<4)left=4;
+   if(top<4)top=4;if(top+bh>rect.height-4)top=rect.height-bh-4;
+   dyTT.style.left=left+'px';dyTT.style.top=top+'px';
+  };
+  var onDyLeave=function(){dyTT.style.display='none';};
+  if(window._dyMoveFn)dyCanvas.removeEventListener('mousemove',window._dyMoveFn);
+  if(window._dyLeaveFn)dyCanvas.removeEventListener('mouseleave',window._dyLeaveFn);
+  window._dyMoveFn=onDyMove;
+  window._dyLeaveFn=onDyLeave;
+  dyCanvas.addEventListener('mousemove',onDyMove);
+  dyCanvas.addEventListener('mouseleave',onDyLeave);
+
+  dyHint.textContent='滚轮平移 ｜ Ctrl+滚轮缩放'+(hasDivs&&!dyEstimated?' ｜ ▼ = 分红除权日':dyEstimated?' ｜ ⚠ 基于除权缺口预估':'');
+  dyHint.style.color='#9ca3af';
+
+  // Setup zoom/pan with the dy chart now available
+  setupKlineZoomPan(labels, klineCanvas, dyCanvas, klineChartInst, dividendYieldChartInst);
+ }).catch(function(e){
+  console.error('Dividend yield series error:',e);
+  dyHint.textContent='股息率数据加载失败';
+  dyHint.style.color='#dc2626';
+  setupKlineZoomPan(labels, klineCanvas, dyCanvas, klineChartInst, null);
+ });
+} else {
+ dyHint.textContent='离线模式，无法获取股息率数据';
+ dyHint.style.color='#9ca3af';
+ setupKlineZoomPan(labels, klineCanvas, dyCanvas, klineChartInst, null);
+}
+
+// ===== Synchronized Zoom/Pan (extracted to reusable function) =====
+function setupKlineZoomPan(labels, kCanvas, dyCanvas, chart1, chart2){
+ var totalBars=labels.length;
+ if(totalBars===0)return;
+ var _kv={start:Math.max(0,totalBars-120),end:totalBars};
+ function applyView(){
+  [chart1,chart2].forEach(function(ch){
+   if(!ch)return;
+   ch.options.scales.x.min=_kv.start;
+   ch.options.scales.x.max=_kv.end-1;
+   ch.update('none');
+  });
+ }
+ function onWheel(e){
+  e.preventDefault();
+  var range=_kv.end-_kv.start;
+  if(e.ctrlKey||e.metaKey){
+   var zf=e.deltaY>0?1.25:0.8;
+   var center=(_kv.start+_kv.end)/2;
+   var nr=Math.max(15,Math.min(totalBars,Math.round(range*zf)));
+   _kv.start=Math.max(0,Math.round(center-nr/2));
+   _kv.end=Math.min(totalBars,_kv.start+nr);
+   if(_kv.end-_kv.start<15)_kv.end=Math.min(totalBars,_kv.start+15);
+  }else{
+   var shift=Math.max(1,Math.round(range*0.12));
+   if(e.deltaY>0){_kv.start=Math.min(totalBars-15,_kv.start+shift);_kv.end=Math.min(totalBars,_kv.end+shift);}
+   else{_kv.start=Math.max(0,_kv.start-shift);_kv.end=Math.max(15,_kv.end-shift);}
+  }
+  applyView();
+ }
+ if(window._kwFn)kCanvas.removeEventListener('wheel',window._kwFn);
+ window._kwFn=onWheel;
+ kCanvas.addEventListener('wheel',onWheel,{passive:false});
+ if(dyCanvas){
+  if(window._dywFn)dyCanvas.removeEventListener('wheel',window._dywFn);
+  window._dywFn=onWheel;
+  dyCanvas.addEventListener('wheel',onWheel,{passive:false});
+ }
+ applyView();
+}
 }
 
 function switchKline(code){currentKlineCode=code;document.querySelectorAll('#page-kline .tab-btn').forEach(b=>b.classList.remove('active'));event.target.classList.add('active');renderKline(code);}
@@ -1504,6 +1699,8 @@ async function refreshQuotes(){
     }
     DATA.quotes = q;
    }
+   // Clear dividends cache so K-line trend chart uses fresh data
+   delete _cache['dividends'];
    // Re-render current holdings table & summary stats
    renderHoldingsOverview();
    // Show refresh time

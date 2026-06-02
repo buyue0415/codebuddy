@@ -80,6 +80,20 @@ def calc_dividend_yield(code: str, current_price: float) -> float:
         [code]
     ).fetchall()
 
+    # Fallback: estimate from K-line ex-dividend gaps if no real records
+    is_estimated = False
+    if not div_rows:
+        try:
+            from db_helper import _estimate_dividends_from_kline
+            estimated = _estimate_dividends_from_kline(code)
+            if estimated:
+                # amount IS the per_share value (already per-share, not total)
+                div_rows = [{'date': e['date'], 'amount': e['per_share'],
+                           '_estimated': True} for e in estimated]
+                is_estimated = True
+        except ImportError:
+            pass
+
     if not div_rows:
         db.close()
         return 0.0
@@ -112,30 +126,29 @@ def calc_dividend_yield(code: str, current_price: float) -> float:
         if amount <= 0:
             continue  # Skip zero/negative (data corruption)
 
-        # Calculate shares held at RECORD DATE (股权登记日), NOT payment date.
-        # In China A-shares, dividend eligibility is based on the record date,
-        # which is typically 2-5 trading days BEFORE the payment date in the
-        # broker statement. Using the payment date directly would overcount
-        # shares bought between record date and payment date.
-        # We subtract 2 calendar days as a conservative approximation.
-        record_date_str = (div_date - timedelta(days=2)).strftime('%Y-%m-%d')
-        buys = db.execute(
-            "SELECT COALESCE(SUM(qty), 0) FROM trades "
-            "WHERE code=? AND date<? AND type='证券买入'",
-            [code, record_date_str]
-        ).fetchone()[0]
-        sells = db.execute(
-            "SELECT COALESCE(SUM(ABS(qty)), 0) FROM trades "
-            "WHERE code=? AND date<? AND type='证券卖出'",
-            [code, record_date_str]
-        ).fetchone()[0]
-        shares = int(buys - sells)
+        # For estimated dividends (from K-line gaps), amount IS per_share
+        if r.get('_estimated'):
+            total_per_share += amount
+        else:
+            # Calculate shares held at RECORD DATE (股权登记日), NOT payment date.
+            record_date_str = (div_date - timedelta(days=2)).strftime('%Y-%m-%d')
+            buys = db.execute(
+                "SELECT COALESCE(SUM(qty), 0) FROM trades "
+                "WHERE code=? AND date<? AND type='证券买入'",
+                [code, record_date_str]
+            ).fetchone()[0]
+            sells = db.execute(
+                "SELECT COALESCE(SUM(ABS(qty)), 0) FROM trades "
+                "WHERE code=? AND date<? AND type='证券卖出'",
+                [code, record_date_str]
+            ).fetchone()[0]
+            shares = int(buys - sells)
 
-        if shares <= 0:
-            continue  # No shares held → can't compute per_share
+            if shares <= 0:
+                continue  # No shares held → can't compute per_share
 
-        per_share = amount / shares
-        total_per_share += per_share
+            per_share = amount / shares
+            total_per_share += per_share
 
     db.close()
 
