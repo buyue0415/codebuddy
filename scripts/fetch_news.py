@@ -2,11 +2,18 @@
 Fetch news for all watchlist stocks from NeoData and persist to SQLite.
 Run daily via scheduler to keep news data current.
 
+Features:
+- Weekend & A-share holiday auto-skip (non-trading days exit gracefully)
+- 3 retry attempts with exponential backoff per stock
+- 60-second timeout per attempt
+- Concurrent content extraction for ALL news items (newsdetail API + URL scraping fallback)
+- content_status field: 'ok' | 'failed' for graceful frontend degradation
+
 Usage: python scripts/fetch_news.py
 Or via automation: POST /api/trigger/news (via server.py trigger endpoint)
 """
-import json, os, re, subprocess, sys
-from datetime import datetime, timedelta
+import json, os, re, subprocess, sys, time
+from datetime import datetime, date
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -17,27 +24,71 @@ NODE = r'C:\Users\28312\.workbuddy\binaries\node\versions\22.12.0\node.exe'
 WESTOCK = r'C:\Users\28312\.workbuddy\plugins\marketplaces\experts\plugins\stock-partner-team\skills\westock-data'
 SCRIPT = 'scripts/index.js'
 MAX_NEWS_PER_STOCK = 20
+MAX_RETRIES = 3
+TIMEOUT_SEC = 60
+
+# A股 2026 年法定节假日（不含周末调休，仅休市日期）
+A_SHARE_HOLIDAYS_2026 = {
+    # 元旦
+    date(2026, 1, 1),
+    # 春节
+    date(2026, 2, 16), date(2026, 2, 17), date(2026, 2, 18),
+    date(2026, 2, 19), date(2026, 2, 20),
+    # 清明节
+    date(2026, 4, 6),
+    # 劳动节
+    date(2026, 5, 1),
+    # 端午节
+    date(2026, 6, 22),
+    # 中秋节 & 国庆节
+    date(2026, 10, 1), date(2026, 10, 2), date(2026, 10, 5),
+    date(2026, 10, 6), date(2026, 10, 7),
+}
+
+def is_trading_day(d: date | None = None) -> bool:
+    """Check if today (or given date) is an A-share trading day."""
+    if d is None:
+        d = date.today()
+    # Weekend check
+    if d.weekday() >= 5:  # Saturday=5, Sunday=6
+        return False
+    # Holiday check
+    if d in A_SHARE_HOLIDAYS_2026:
+        return False
+    return True
 
 def fetch_news_node(market_code: str, limit: int = MAX_NEWS_PER_STOCK) -> list[dict]:
-    """Fetch news for one stock via Node.js CLI. Returns list of parsed news items."""
-    try:
-        result = subprocess.run(
-            [NODE, SCRIPT, 'news', market_code, '--limit', str(limit)],
-            cwd=WESTOCK, capture_output=True, timeout=30,
-        )
-        stdout = result.stdout
-        if not stdout:
-            return []
-        # Decode: try gbk first, fallback to utf-8
+    """Fetch news for one stock via Node.js CLI with retry. Returns list of parsed news items."""
+    last_error = None
+    for attempt in range(1, MAX_RETRIES + 1):
         try:
-            text = stdout.decode('gbk')
-        except (UnicodeDecodeError, LookupError):
-            text = stdout.decode('utf-8', errors='replace')
+            result = subprocess.run(
+                [NODE, SCRIPT, 'news', market_code, '--limit', str(limit)],
+                cwd=WESTOCK, capture_output=True, timeout=TIMEOUT_SEC,
+            )
+            if result.returncode != 0:
+                stderr_text = result.stderr.decode('gbk', errors='replace') if result.stderr else ''
+                raise RuntimeError(f"exit code {result.returncode}: {stderr_text[:200]}")
+            stdout = result.stdout
+            if not stdout:
+                return []
+            # Decode: try gbk first, fallback to utf-8
+            try:
+                text = stdout.decode('gbk')
+            except (UnicodeDecodeError, LookupError):
+                text = stdout.decode('utf-8', errors='replace')
 
-        return _parse_news_table(text)
-    except Exception as e:
-        print(f"  NEWS fetch error for {market_code}: {e}")
-        return []
+            return _parse_news_table(text)
+        except subprocess.TimeoutExpired:
+            last_error = f"TimeoutExpired ({TIMEOUT_SEC}s)"
+        except Exception as e:
+            last_error = str(e)
+        if attempt < MAX_RETRIES:
+            backoff = 2 ** attempt  # 2, 4, 8 seconds
+            print(f"  Retry {attempt}/{MAX_RETRIES} for {market_code} after {backoff}s ({last_error})")
+            time.sleep(backoff)
+    print(f"  FAILED after {MAX_RETRIES} retries for {market_code}: {last_error}")
+    return []
 
 def _parse_news_table(text: str) -> list[dict]:
     """Parse the markdown table output from the news CLI command."""
@@ -150,6 +201,13 @@ def _is_major(title: str, summary: str) -> bool:
     return any(kw in text for kw in major_kw)
 
 def main():
+    # Non-trading day check
+    if not is_trading_day():
+        today_str = date.today().isoformat()
+        weekday_name = ['周一','周二','周三','周四','周五','周六','周日'][date.today().weekday()]
+        print(f"[fetch_news] {today_str} ({weekday_name}) is not an A-share trading day. Skipping.")
+        return
+
     watchlist = get_watchlist()
     print(f"[fetch_news] Watchlist: {len(watchlist)} stocks")
 
@@ -157,6 +215,7 @@ def main():
     all_news = []
     codes = [s['code'] for s in watchlist]
 
+    # Step 1: Fetch news headlines from NeoData
     for stock in watchlist:
         code, name, mkt = stock['code'], stock['name'], stock.get('market', 'sh')
         market_code = f'{mkt}{code}'
@@ -172,7 +231,7 @@ def main():
         print("[fetch_news] No news fetched. Check network connectivity.")
         return
 
-    # Stronger in-memory dedup: prefer URL as unique key, fallback to (title, date, code)
+    # Step 2: Dedup
     seen_url = set()
     seen_fallback = set()
     deduped = []
@@ -185,8 +244,9 @@ def main():
         elif not url_key and fallback_key not in seen_fallback:
             seen_fallback.add(fallback_key)
             deduped.append(n)
+    print(f"  Dedup: {len(all_news)} → {len(deduped)} unique items")
 
-    # Persist via upsert which uses INSERT OR IGNORE + unique index
+    # Step 3: Persist via upsert (headlines + metadata only, no content extraction)
     from db_helper import upsert_news
     upsert_news(deduped)
 

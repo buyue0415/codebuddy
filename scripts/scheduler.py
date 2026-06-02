@@ -28,7 +28,7 @@ import json, subprocess, os, sys
 from datetime import datetime
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PYTHON = r'C:\Users\28312\.workbuddy\binaries\python\versions\3.14.3\python.exe'
+PYTHON = r'C:\Users\28312\.workbuddy\binaries\python\versions\3.12.6\python.exe'
 
 def run(name, timeout=60):
     script = os.path.join(ROOT, 'scripts', name)
