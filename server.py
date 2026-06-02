@@ -18,7 +18,7 @@ from socketserver import ThreadingMixIn
 
 PORT = 8765
 ROOT = os.path.dirname(os.path.abspath(__file__))
-PYTHON = r"C:\Users\28312\.workbuddy\binaries\python\versions\3.14.3\python.exe"
+PYTHON = r"C:\Users\28312\.workbuddy\binaries\python\versions\3.12.6\python.exe"
 NODE = r"C:\Users\28312\.workbuddy\binaries\node\versions\22.12.0\node.exe"
 
 # Cache for init data (Category B optimization)
@@ -100,6 +100,142 @@ def _invalidate_init_cache():
     global _init_cache
     _init_cache = None
 
+
+# ─── Request / Response Detail Logger ───
+# Usage: set LOG_DETAIL_ENABLED = True/False to toggle.
+# Automatically intercepts request params and response body via
+# json_response(), do_GET, and do_POST — no changes needed in
+# individual endpoint handlers.
+
+LOG_DETAIL_ENABLED = True          # Global toggle switch
+LOG_MAX_STR_LEN = 500              # Max chars per string value
+LOG_MAX_LIST_ITEMS = 5             # Truncate lists longer than this
+LOG_SENSITIVE_KEYS = {
+    'password', 'passwd', 'token', 'secret', 'api_key', 'apikey',
+    'authorization', 'auth', 'credential', 'private_key', 'access_key',
+    'sign', 'signature',
+}
+
+def _safe_log_data(obj, depth=0, max_depth=4):
+    """Recursively sanitize data for safe logging:
+    - Filter sensitive keys (password, token, secret, etc.)
+    - Truncate long strings
+    - Cap list items
+    - Limit nesting depth
+    """
+    if depth >= max_depth:
+        if isinstance(obj, dict):
+            return {'__truncated__': f'max depth {max_depth}'}
+        if isinstance(obj, list):
+            return [f'<{len(obj)} items, depth limit>']
+        return '<max depth>'
+
+    if isinstance(obj, dict):
+        result = {}
+        for k, v in obj.items():
+            key_norm = k.lower().replace('_', '').replace('-', '')
+            if any(s in key_norm for s in LOG_SENSITIVE_KEYS):
+                result[k] = '***FILTERED***'
+                continue
+            result[k] = _safe_log_data(v, depth + 1, max_depth)
+            # Truncate oversized dict
+            try:
+                if len(json.dumps(result, ensure_ascii=False)) > LOG_MAX_STR_LEN * 2:
+                    result['__truncated__'] = f'... {len(obj) - len(result) + 1} more keys'
+                    break
+            except Exception:
+                break
+        return result
+
+    if isinstance(obj, list):
+        if len(obj) > LOG_MAX_LIST_ITEMS:
+            shown = [_safe_log_data(item, depth + 1, max_depth) for item in obj[:LOG_MAX_LIST_ITEMS]]
+            shown.append(f'... ({len(obj) - LOG_MAX_LIST_ITEMS} more items)')
+            return shown
+        return [_safe_log_data(item, depth + 1, max_depth) for item in obj]
+
+    if isinstance(obj, str):
+        if len(obj) > LOG_MAX_STR_LEN:
+            return obj[:LOG_MAX_STR_LEN] + f'… [{len(obj)} total]'
+        return obj
+
+    if isinstance(obj, bytes):
+        return f'<bytes:{len(obj)}B>'
+
+    return obj
+
+
+def _request_log_detail(handler, resp_data, status_code):
+    """Log request params + response body in a color-coded detail block.
+    Called automatically from json_response() after the response is written.
+    Reads captured params from handler._req_query / handler._req_body.
+    """
+    if not LOG_DETAIL_ENABLED:
+        return
+
+    RST = '\033[0m'
+    DIM = '\033[2m'
+    CYN = '\033[36m'
+    GRN = '\033[32m'
+    YLW = '\033[33m'
+    RED = '\033[31m'
+
+    # Compute elapsed time
+    start = getattr(handler, '_request_start_time', time.time())
+    elapsed = (time.time() - start) * 1000
+
+    lines = [f"{DIM}  ┌─ Detail{RST}"]
+
+    # ── Query params (GET) ──
+    query = getattr(handler, '_req_query', None)
+    if query:
+        safe = _safe_log_data(query)
+        try:
+            j = json.dumps(safe, ensure_ascii=False, indent=2)
+            for i, line in enumerate(j.split('\n')):
+                prefix = f"{CYN}Query{RST} " if i == 0 else '     '
+                lines.append(f"  {DIM}│{RST} {prefix}{line}")
+        except Exception:
+            lines.append(f"  {DIM}│{RST} {CYN}Query{RST} {str(safe)[:LOG_MAX_STR_LEN]}")
+
+    # ── Body params (POST) ──
+    body = getattr(handler, '_req_body', None)
+    if body:
+        safe = _safe_log_data(body)
+        try:
+            j = json.dumps(safe, ensure_ascii=False, indent=2)
+            for i, line in enumerate(j.split('\n')):
+                prefix = f"{CYN}Body {RST}" if i == 0 else '      '
+                lines.append(f"  {DIM}│{RST} {prefix}{line}")
+        except Exception:
+            lines.append(f"  {DIM}│{RST} {CYN}Body {RST} {str(safe)[:LOG_MAX_STR_LEN]}")
+
+    # ── Response ──
+    if resp_data is not None:
+        safe = _safe_log_data(resp_data)
+        try:
+            j = json.dumps(safe, ensure_ascii=False, indent=2)
+            for i, line in enumerate(j.split('\n')):
+                # Truncate response lines if too many
+                if i > 30:
+                    lines.append(f"  {DIM}│{RST}       ... ({len(j.split(chr(10))) - 30} more lines)")
+                    break
+                prefix = f"{GRN}Resp {RST}" if i == 0 else '      '
+                lines.append(f"  {DIM}│{RST} {prefix}{line}")
+        except Exception:
+            lines.append(f"  {DIM}│{RST} {GRN}Resp {RST} {str(safe)[:LOG_MAX_STR_LEN]}")
+
+    # ── Timing ──
+    if elapsed > 1000:    tc = RED
+    elif elapsed > 300:   tc = YLW
+    else:                 tc = GRN
+    lines.append(f"  {DIM}│{RST} {CYN}Time{RST}  {tc}{elapsed:.1f}ms{RST}")
+
+    lines.append(f"  {DIM}└{'─' * 52}{RST}")
+
+    sys.stderr.write('\n'.join(lines) + '\n')
+    sys.stderr.flush()
+
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
@@ -123,6 +259,8 @@ def json_response(handler, data, status=200):
     handler.send_header("Access-Control-Allow-Origin", "*")
     handler.end_headers()
     handler.wfile.write(json.dumps(data, ensure_ascii=False).encode("utf-8"))
+    # Auto-log request params + response body (non-invasive detail logging)
+    _request_log_detail(handler, data, status)
 
 
 def read_json(path):
@@ -297,6 +435,9 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+        # Capture query params for detail logging (non-invasive, 1 line)
+        self._req_query = dict(urllib.parse.parse_qsl(parsed.query)) if parsed.query else {}
+        self._req_body = None
 
         if path == "/" or path == "/index.html":
             self.serve_file("deliverables/bank-stock-system.html", "text/html")
@@ -627,6 +768,7 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
             json_response(self, {"success": False, "error": "Unknown DELETE endpoint"}, 404)
 
     def do_POST(self):
+        global _refresh_in_progress
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 
@@ -643,6 +785,10 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
             params = json.loads(body) if body else {}
         except json.JSONDecodeError:
             params = {}
+
+        # Capture request body for detail logging (non-invasive, 1 line)
+        self._req_query = None
+        self._req_body = params
 
         try:
             # === WATCHLIST CRUD (V0.6 RESTful + legacy compat) ===
@@ -757,9 +903,58 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
                         "output": out[-1000:] if out else "",
                     })
 
+            elif path == "/api/v2/quotes/refresh":
+                # Lightweight quotes-only refresh (no full sync)
+                if _refresh_in_progress:
+                    json_response(self, {"success": False, "error": "刷新已在运行中，请稍候"}, 429)
+                    return
+                _refresh_in_progress = True
+                try:
+                    ok, out = run_script("refresh_quotes.py", 60)
+                    if ok and out:
+                        try:
+                            # Parse JSON output from refresh_quotes.py
+                            # Find the last JSON object in the output
+                            lines = out.strip().split('\n')
+                            json_line = None
+                            for line in reversed(lines):
+                                line = line.strip()
+                                if line.startswith('{') and line.endswith('}'):
+                                    json_line = line
+                                    break
+                            if json_line:
+                                data = json.loads(json_line)
+                                _invalidate_init_cache()
+                                json_response(self, {
+                                    "success": True,
+                                    "message": f"股价已刷新 ({data.get('count', 0)}只股票)",
+                                    "data": data.get("data", {}),
+                                    "refreshed_at": data.get("refreshed_at", ""),
+                                    "stats": data.get("stats", {}),
+                                })
+                            else:
+                                json_response(self, {
+                                    "success": True,
+                                    "message": "股价已刷新",
+                                    "output": out[-500:] if out else "",
+                                })
+                        except json.JSONDecodeError:
+                            json_response(self, {
+                                "success": True,
+                                "message": "股价已刷新",
+                                "output": out[-500:] if out else "",
+                            })
+                    else:
+                        json_response(self, {
+                            "success": False,
+                            "error": "刷新失败",
+                            "output": out[-500:] if out else "",
+                        })
+                finally:
+                    _refresh_in_progress = False
+
             elif path == "/api/trigger/predict":
                 # Prevent concurrent refresh runs
-                global _refresh_in_progress
                 if _refresh_in_progress:
                     json_response(self, {"success": False, "error": "刷新已在运行中，请稍候"}, 429)
                     return
@@ -1100,10 +1295,95 @@ tr:hover td{background:#2a2a2a}.num{color:#b5cea8}.text{color:#ce9178}.null{colo
         self.end_headers()
         self.wfile.write(data)
 
+    def handle_one_request(self):
+        """Override to track request start time for detailed logging."""
+        self._request_start_time = time.time()
+        try:
+            super().handle_one_request()
+        except Exception:
+            if not hasattr(self, '_request_start_time'):
+                self._request_start_time = time.time()
+            raise
+
     def log_message(self, format, *args):
-        # Quieter logging
-        if "/api/" in self.path:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] {self.command} {self.path}")
+        """Enhanced request logging: method, full path, query params, status,
+        response time (ms), client IP, and User-Agent — with ANSI colors.
+
+        Color legend:
+          GET=Blue  POST=Green  DELETE=Red  PUT=Yellow  OPTIONS=Cyan
+          Status 2xx=Green  3xx=Yellow  4xx=Red  5xx=White-on-Red
+          Timing <300ms=Green  300ms-1s=Yellow  >1s=Red
+        """
+        # ── Calculate response time ──
+        start = getattr(self, '_request_start_time', time.time())
+        elapsed = (time.time() - start) * 1000
+
+        # ── Status code from base class log_request(code) ──
+        status_code = str(args[0]) if args else "???"
+
+        # ── ANSI escape codes ──
+        RST = '\033[0m'           # Reset
+        DIM = '\033[2m'           # Dim
+        BLD = '\033[1m'           # Bold
+        BLU = '\033[34m'          # Blue
+        GRN = '\033[32m'          # Green
+        RED = '\033[31m'          # Red
+        YLW = '\033[33m'          # Yellow
+        CYN = '\033[36m'          # Cyan
+        MAG = '\033[35m'          # Magenta
+        BGW = '\033[41m\033[97m'  # White on red background (5xx)
+
+        # ── Method → color mapping ──
+        METHOD_COLORS = {
+            'GET': BLU, 'POST': GRN, 'DELETE': RED,
+            'PUT': YLW, 'PATCH': MAG, 'OPTIONS': CYN,
+        }
+        mc = METHOD_COLORS.get(self.command, RST)
+
+        # ── Status → color ──
+        try:
+            ci = int(status_code)
+            if ci >= 500:   sc = BGW + BLD
+            elif ci >= 400: sc = RED + BLD
+            elif ci >= 300: sc = YLW
+            else:           sc = GRN
+        except ValueError:
+            sc = RST
+
+        # ── Timing → color ──
+        if elapsed > 1000:      tc = RED + BLD
+        elif elapsed > 300:     tc = YLW
+        else:                   tc = GRN
+
+        # ── Truncate overly long paths ──
+        path = self.path
+        if len(path) > 65:
+            path = path[:62] + '...'
+
+        # ── Padding for method alignment ──
+        m_pad = ' ' * (7 - len(self.command))
+
+        # ── Client info ──
+        ip = self.client_address[0] if self.client_address else '-'
+        ua = self.headers.get('User-Agent', '-')
+        if len(ua) > 60:
+            ua = ua[:57] + '...'
+
+        timestamp = datetime.now().strftime('%H:%M:%S')
+
+        # ── Assemble log line ──
+        line = (
+            f"{DIM}[{timestamp}]{RST} "
+            f"{BLD}{mc}{self.command}{RST}{m_pad}  "
+            f"{path:<67}"
+            f"→ {sc}{status_code}{RST}  "
+            f"{tc}{elapsed:6.1f}ms{RST}  "
+            f"{DIM}{ip}{RST}  "
+            f"{DIM}{ua}{RST}"
+        )
+
+        sys.stderr.write(line + '\n')
+        sys.stderr.flush()
 
 
 class ThreadedHTTPServer(ThreadingMixIn, http.server.HTTPServer):

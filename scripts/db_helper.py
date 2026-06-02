@@ -63,16 +63,22 @@ def get_quotes():
     return {r['code']: {'price': r['price'], 'change': r['change'], 'open': r['open'], 'high': r['high'], 'low': r['low'], 'pe': r['pe'], 'pb': r['pb'], 'dy': r['dy']} for r in rows}
 
 def get_positions():
+    """Return all positions with correctly computed per_share dividends.
+
+    Uses get_dividends() for each position to compute per_share as
+    amount / shares_before_date, rather than the raw 'price' column
+    (which is stock market price, NOT dividend per share).
+    """
     db = get_db()
     open_pos = {}
-    for r in db.execute("SELECT p.*, GROUP_CONCAT(d.date||':'||d.amount||':'||d.price,'|') as divs FROM positions p LEFT JOIN dividends d ON p.code=d.code GROUP BY p.code").fetchall():
-        div_list = []
-        if r['divs']:
-            for d in r['divs'].split('|'):
-                parts = d.split(':')
-                if len(parts) >= 3:
-                    div_list.append({'date': parts[0], 'amount': float(parts[1]), 'price': float(parts[2])})
-        open_pos[r['code']] = {'code': r['code'], 'name': r['name'], 'qty': r['qty'], 'total_cost': r['total_cost'], 'avg_cost': r['avg_cost'], 'realized_pnl': r['realized_pnl'], 'dividends': div_list}
+    for r in db.execute("SELECT * FROM positions").fetchall():
+        code = r['code']
+        stock_divs = get_dividends(code)
+        div_list = [{'date': d['date'], 'amount': d['amount'],
+                      'per_share': d['per_share']} for d in stock_divs]
+        open_pos[code] = {'code': r['code'], 'name': r['name'], 'qty': r['qty'],
+            'total_cost': r['total_cost'], 'avg_cost': r['avg_cost'],
+            'realized_pnl': r['realized_pnl'], 'dividends': div_list}
 
     closed_pos = {r['code']: dict(r) for r in db.execute("SELECT * FROM closed_positions").fetchall()}
 
@@ -128,14 +134,23 @@ def get_accuracy_stats(code):
     return result
 
 def get_news(filter_type='all'):
+    """Return news list with id, news_id, content, content_status fields."""
     db = get_db()
+    sql = "SELECT id, date, code, title, summary, content, content_status, source, sentiment, major, url, news_id FROM news"
     if filter_type == 'major':
-        rows = db.execute("SELECT * FROM news WHERE major=1 ORDER BY date DESC").fetchall()
+        rows = db.execute(sql + " WHERE major=1 ORDER BY date DESC").fetchall()
     elif filter_type == 'all':
-        rows = db.execute("SELECT * FROM news ORDER BY date DESC").fetchall()
+        rows = db.execute(sql + " ORDER BY date DESC").fetchall()
     else:
-        rows = db.execute("SELECT * FROM news WHERE code=? ORDER BY date DESC", [filter_type]).fetchall()
+        rows = db.execute(sql + " WHERE code=? ORDER BY date DESC", [filter_type]).fetchall()
     return [dict(r) for r in rows]
+
+def update_news_content(news_id: int, content: str):
+    """Update the content field for a single news item (V0.7 on-demand caching)."""
+    db = get_db()
+    db.execute("UPDATE news SET content=? WHERE id=?", [content, news_id])
+    db.commit()
+    db.close()
 
 def get_expert_reports():
     db = get_db()
@@ -170,21 +185,25 @@ def _calc_fees(qty, price, config=None):
     return tf, rf, hf
 
 def get_current_positions():
-    """Return current positions with dividends, trades, and fee totals"""
+    """Return current positions with dividends, trades, and fee totals.
+
+    IMPORTANT: dividend entries now use 'per_share' (correctly calculated as
+    amount / shares_before_date) instead of the raw 'price' column (which is
+    the stock market price, NOT the per-share dividend amount).
+    """
     import json
     db = get_db()
     config = get_config()
 
-    # Positions + dividends (aggregated)
+    # Build positions from DB — use get_dividends() for each stock
+    # which correctly computes per_share via _shares_before_date()
     open_pos = {}
-    for r in db.execute("SELECT p.*, GROUP_CONCAT(d.date||':'||d.amount||':'||d.price,'|') as divs FROM positions p LEFT JOIN dividends d ON p.code=d.code GROUP BY p.code").fetchall():
-        div_list = []
-        if r['divs']:
-            for d in r['divs'].split('|'):
-                parts = d.split(':')
-                if len(parts) >= 3:
-                    div_list.append({'date': parts[0], 'amount': float(parts[1]), 'price': float(parts[2])})
+    for r in db.execute("SELECT * FROM positions").fetchall():
         code = r['code']
+        stock_divs = get_dividends(code)
+        div_list = [{'date': d['date'], 'amount': d['amount'],
+                      'per_share': d['per_share']} for d in stock_divs]
+
         open_pos[code] = {'code': code, 'name': r['name'], 'qty': r['qty'],
             'total_cost': r['total_cost'], 'avg_cost': r['avg_cost'],
             'realized_pnl': r['realized_pnl'], 'dividends': div_list}
@@ -266,7 +285,16 @@ def _shares_before_date(code, date):
     return int(buys - sells)
 
 def get_dividends(code=None):
-    """Return all dividends with per_share calculation; optionally filtered by code"""
+    """Return all dividends with per_share calculation; optionally filtered by code.
+
+    IMPORTANT: Uses record_date (股权登记日) instead of payment_date (派息日)
+    for shares-before calculation. In China A-shares, dividend eligibility is
+    determined by holdings on the record date, which is typically 2-5 trading
+    days before the payment date in the broker statement.
+    We subtract 2 calendar days from the payment date as a conservative
+    approximation of the record date.
+    """
+    from datetime import datetime, timedelta
     db = get_db()
     if code:
         rows = db.execute("SELECT date, code, amount, price FROM dividends WHERE code=? ORDER BY date DESC", [code]).fetchall()
@@ -274,7 +302,15 @@ def get_dividends(code=None):
         rows = db.execute("SELECT date, code, amount, price FROM dividends ORDER BY date DESC").fetchall()
     result = []
     for r in rows:
-        shares = _shares_before_date(r['code'], r['date'])
+        # Use record date (≈ payment_date - 2 days) for share counting
+        # Broker statements record the payment date, not the record date.
+        # Shares bought between record date and payment date do NOT qualify.
+        try:
+            pay_date = datetime.strptime(r['date'][:10], '%Y-%m-%d')
+            record_date = (pay_date - timedelta(days=2)).strftime('%Y-%m-%d')
+        except (ValueError, IndexError):
+            record_date = r['date']
+        shares = _shares_before_date(r['code'], record_date)
         per_share = round(r['amount'] / shares, 4) if shares > 0 else 0
         result.append({
             'date': r['date'],
@@ -439,20 +475,38 @@ def upsert_news(news_list, today=None):
     to silently skip duplicates. The `today` parameter is kept for backward
     compatibility but no longer performs bulk DELETE — dedup is handled at
     the DB constraint level.
+
+    Includes content_status field: 'ok' | 'failed' | '' (empty=legacy/pending).
     """
     db = get_db()
+    # Ensure content + news_id + content_status columns exist (migration)
+    try:
+        cols = [r[1] for r in db.execute("PRAGMA table_info(news)").fetchall()]
+        if 'content' not in cols:
+            db.execute("ALTER TABLE news ADD COLUMN content TEXT DEFAULT ''")
+            print("  [MIGRATE] Added 'content' column to news table")
+        if 'news_id' not in cols:
+            db.execute("ALTER TABLE news ADD COLUMN news_id TEXT DEFAULT ''")
+            print("  [MIGRATE] Added 'news_id' column to news table")
+        if 'content_status' not in cols:
+            db.execute("ALTER TABLE news ADD COLUMN content_status TEXT DEFAULT ''")
+            print("  [MIGRATE] Added 'content_status' column to news table")
+    except Exception:
+        pass
     inserted = 0
     skipped = 0
     for n in news_list:
         try:
             db.execute(
-                "INSERT OR IGNORE INTO news(date,code,title,summary,source,sentiment,major,url) "
-                "VALUES(?,?,?,?,?,?,?,?)",
+                "INSERT OR IGNORE INTO news(date,code,title,summary,content,content_status,source,sentiment,major,url,news_id) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 [
                     n.get('date'), n.get('code'), n.get('title'),
-                    n.get('summary', ''), n.get('source', '综合'),
+                    n.get('summary', ''), n.get('content', ''),
+                    n.get('content_status', ''),
+                    n.get('source', '综合'),
                     n.get('sentiment', 'neutral'), 1 if n.get('major') else 0,
-                    n.get('url', ''),
+                    n.get('url', ''), n.get('news_id', ''),
                 ]
             )
             if db.total_changes > 0:
