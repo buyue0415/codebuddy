@@ -83,6 +83,7 @@
 |------|------|------|--------|
 | `/api/v2/expert` | GET | — | `{data: [{date, stocks: {...}}]}` |
 | `/api/v2/expert/import` | POST | JSON 报告体 | `{success, message, warnings}` |
+| `/api/expert/import` (兼容) | POST | JSON 报告体 | 重定向至 `/api/v2/expert/import` |
 
 ### 学习与准确率 (Learning & Accuracy)
 

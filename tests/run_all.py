@@ -7,11 +7,17 @@ Usage:
     python tests/run_all.py --module=db        # Run specific module only
 
 Modules:
-    db       - Database layer (P1 CRITICAL)
+    db       - Database CRUD layer (P1 CRITICAL)
     sync     - Sync engine / signals (P1 CRITICAL)
     news     - News fetcher (P1 CRITICAL)
     stmt     - Statement parser (P2 HIGH)
-    api      - API integration (P2 HIGH) — requires server running
+    api      - API server routing & format (P1 CRITICAL)
+    dal      - DB schema & integrity (P1 CRITICAL)
+    learn    - Self-learning params structure (P2 HIGH)
+    update   - Daily sync pipeline (P2 HIGH)
+    sched    - Scheduler & automation (P2 HIGH)
+    stkdb    - Stock code & watchlist (P2 HIGH)
+    api_it   - API integration (P2 HIGH) — requires server running
 """
 import os, sys, argparse, time, unittest
 
@@ -26,10 +32,16 @@ from conftest import print_header
 # ======================================================================
 
 MODULES = {
-    'db':   {'path': 'tests.test_db_helper',      'priority': 'P1 CRITICAL', 'desc': 'Database CRUD layer'},
-    'sync': {'path': 'tests.test_sync_engine',     'priority': 'P1 CRITICAL', 'desc': 'Signals / predictions / EMA'},
-    'news': {'path': 'tests.test_news_fetcher',    'priority': 'P1 CRITICAL', 'desc': 'News parsing / sentiment'},
-    'stmt': {'path': 'tests.test_statement_parser','priority': 'P2 HIGH',     'desc': 'Position calculation logic'},
+    'db':      {'path': 'tests.test_db_helper',       'priority': 'P1 CRITICAL', 'desc': 'Database CRUD layer'},
+    'sync':    {'path': 'tests.test_sync_engine',      'priority': 'P1 CRITICAL', 'desc': 'Signals / predictions / EMA'},
+    'news':    {'path': 'tests.test_news_fetcher',     'priority': 'P1 CRITICAL', 'desc': 'News parsing / sentiment'},
+    'stmt':    {'path': 'tests.test_statement_parser', 'priority': 'P2 HIGH',     'desc': 'Position calculation logic'},
+    'api':     {'path': 'tests.test_api_server',       'priority': 'P1 CRITICAL', 'desc': 'API server routing & format'},
+    'dal':     {'path': 'tests.test_database_layer',   'priority': 'P1 CRITICAL', 'desc': 'DB schema & integrity'},
+    'learn':   {'path': 'tests.test_self_learning',    'priority': 'P2 HIGH',     'desc': 'Self-learning params structure'},
+    'update':  {'path': 'tests.test_daily_update',     'priority': 'P2 HIGH',     'desc': 'Daily sync pipeline'},
+    'sched':   {'path': 'tests.test_scheduler',        'priority': 'P2 HIGH',     'desc': 'Scheduler & automation'},
+    'stkdb':   {'path': 'tests.test_stock_database',   'priority': 'P2 HIGH',     'desc': 'Stock code & watchlist'},
 }
 
 

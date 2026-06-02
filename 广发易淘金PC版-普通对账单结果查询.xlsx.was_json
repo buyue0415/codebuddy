@@ -1,0 +1,443 @@
+{
+  "meta": {
+    "title": "中国联通（600050）投研圆桌报告",
+    "date": "2026-05-28",
+    "roundtable_host": "圆汇众（Yuan）· 投研主编",
+    "source": "腾讯自选股股票投研专家团",
+    "disclaimer": "以上内容由 AI 基于公开信息整理生成，仅供参考，不构成任何投资建议或个股推荐。投资有风险，决策需谨慎。"
+  },
+  "stock": {
+    "code": "600050",
+    "name": "中国联通",
+    "market": "A股",
+    "price": 4.35,
+    "change_pct": -0.68,
+    "market_cap_bn": 1360,
+    "pe_ttm": 15.71,
+    "pe_fwd": 15.91,
+    "pb": 0.80,
+    "ps_ttm": 0.35,
+    "dividend_yield": 0.0398,
+    "week_52_high": 5.84,
+    "week_52_low": 4.31,
+    "ytd_change_pct": -14.87,
+    "eps_ttm": 0.277,
+    "eps_fwd_2026e": 0.26,
+    "roe_pct": 5.39,
+    "net_margin_pct": 5.30
+  },
+  "module1_conclusion": {
+    "user_question": "分析中国联通",
+    "key_data_snapshot": [
+      {"label": "股价", "value": "4.35元", "direction": "down", "note": "-0.68%"},
+      {"label": "PE(TTM)", "value": "15.71x", "direction": "neutral", "note": "25-30%分位"},
+      {"label": "PB", "value": "0.80", "direction": "down", "note": "破净"},
+      {"label": "股息率", "value": "3.98%", "direction": "neutral", "note": "逐年提升"},
+      {"label": "Q1净利增速", "value": "-18%", "direction": "down", "note": "YoY"},
+      {"label": "5日主力资金", "value": "-7.88亿", "direction": "down", "note": "净流出"},
+      {"label": "52周新低", "value": "4.31", "direction": "down", "note": "今日触及"},
+      {"label": "YTD", "value": "-14.87%", "direction": "down", "note": "远跑输大盘"}
+    ],
+    "roundtable_view": "方向对但时机未到——6G、算力、Token的产业方向没有异议，但EPS斜率在向下弯、资本信号明确灭灯、技术面全线破位，圆桌6席中5席倾向观望，仅逆向投资人认为安全边际足够可分批试探。共识：等盈利拐点确认后再行动不迟。",
+    "core_viewpoints": [
+      {
+        "dimension": "产业卡位",
+        "evidence": "6G/算力核心受益环节是设备商和算力上游，运营商当前是资本开支方而非利润受益方，联通在运营商里份额最小、差异化最弱",
+        "judgment": "产业链核心卡位不在运营商，联通三家里最弱"
+      },
+      {
+        "dimension": "信号面",
+        "evidence": "四层信号（政策✅/产业⚠️/新闻✅/资本❌）只对两层半，5日主力净流出7.88亿、融资净卖出、国调基金减持",
+        "judgment": "资金不认，逻辑再好也白搭"
+      },
+      {
+        "dimension": "估值水位",
+        "evidence": "PE 15.7x在25-30%分位看似便宜，但EPS预期从0.292降至0.26（FY2026E -10.35%），盈利恶化带来的便宜是估值陷阱",
+        "judgment": "估值陷阱风险，红利配置选移动更优"
+      },
+      {
+        "dimension": "逆向机会",
+        "evidence": "PB 0.80破净+4%股息+央企不可退市=安全边际够，4.31/4.18/4.05有K线支撑可分批建仓",
+        "judgment": "安全边际够、弹性一般，只亏时间不亏钱（前提：利润不持续恶化）"
+      },
+      {
+        "dimension": "短线盘面",
+        "evidence": "5/18-19脉冲拉升后连跌6天，所有均线失守，99.5%筹码套牢，6G行情资金选设备不选运营商",
+        "judgment": "没有右侧信号，不猜底"
+      }
+    ],
+    "stance_distribution": {
+      "dimensions": ["看多", "观望", "偏空"],
+      "votes": {
+        "看多": 1,
+        "观望": 3,
+        "偏空": 2
+      },
+      "detail": [
+        {"stance": "看多", "member": "逆向投资人·坤候底", "reason": "安全边际够，分批建仓"},
+        {"stance": "观望", "member": "产业策略师·星望远", "reason": "等业绩拐点+技术企稳+Token兑现三条件至少满足两个"},
+        {"stance": "观望", "member": "信号派首席·洲四方", "reason": "四层信号不对齐，等资金确认"},
+        {"stance": "观望", "member": "财报研究员·钊审财", "reason": "增速换挡期，5-10%观察仓按季度跟踪"},
+        {"stance": "偏空", "member": "估值分析师·文衡价", "reason": "EPS向下弯=估值陷阱，移动更优"},
+        {"stance": "偏空", "member": "短线冲浪手·磊追浪", "reason": "全线破位无右侧信号，不猜底"}
+      ]
+    }
+  },
+  "module2_expert_opinions": [
+    {
+      "id": "industry-strategist",
+      "emoji": "🌊",
+      "title": "产业策略师",
+      "alias": "星望远",
+      "methodology": "先判断产业趋势在哪，再判断产业链里谁最核心卡位，最后选标的。",
+      "key_findings": {
+        "industry_trends": [
+          {"trend": "6G进入试验期", "status": "远期催化，非当期兑现", "detail": "工信部批复6GHz试验频率，商用最早2030年，运营商是资本开支方"},
+          {"trend": "算力/Token经济第二曲线", "status": "方向正确但体量不足", "detail": "联通算力收入占比>15%，AI收入+140%（基数不透明），智算45 EFLOPS"},
+          {"trend": "传统通信业务见顶", "status": "存量博弈", "detail": "三大运营商营收增速0-1%，ARPU见顶，增长靠结构优化"}
+        ],
+        "value_chain_position": "运营商在6G方向是资本开支方非受益方；在算力方向是IDC+管道偏下游位置。核心卡位在设备商和算力上游。",
+        "competitive_landscape": {
+          "vs_mobile": "移动用户3.56亿（不到移动一半），算力45 EFLOPS（不到移动一半），云品牌力第三",
+          "differentiation": "混改走得最远，但协同优势尚未转化为收入差异"
+        },
+        "valuation_view": "破净不算贵，但也不是真正的便宜——增速下行周期里'便宜'可能是价值陷阱"
+      },
+      "conclusion": "产业趋势没问题，但产业链核心卡位不在运营商。联通三家里增速最低、份额最小、差异化不明。等业绩拐点+技术企稳+Token兑现三个条件中至少两个满足再考虑。",
+      "trigger_conditions": ["业绩拐点确认：Q2或Q3净利增速转正", "技术面企稳：股价站回MA60以上", "Token经济兑现：Token运营收入有实质数据支撑"]
+    },
+    {
+      "id": "signal-chief",
+      "emoji": "📡",
+      "title": "信号派首席",
+      "alias": "洲四方",
+      "methodology": "四层信号（政策/产业/新闻/资本）必须对齐，不齐不动手。",
+      "key_findings": {
+        "four_layer_signals": [
+          {"layer": "政策信号", "status": "亮", "evidence": "数字中国行动方案、6G频谱获批、算力政策持续"},
+          {"layer": "产业信号", "status": "分裂", "evidence": "算力/Token有拐点迹象 vs Q1净利-18%、传统业务下滑"},
+          {"layer": "新闻信号", "status": "密度够", "evidence": "换帅、6G频谱、Token套餐上线，但利好出尽"},
+          {"layer": "资本信号", "status": "灭", "evidence": "5日主力净流出7.88亿、融资净卖出3807万、国调基金-2.16亿股"}
+        ],
+        "technical_confirmation": {
+          "moving_averages": "跌破所有均线（MA5到MA250）",
+          "macd": "空头排列，DIF -0.045，DEA -0.008",
+          "rsi6": 25.66,
+          "bollinger": "贴近下轨4.265运行",
+          "volume_ratio": 0.53
+        },
+        "systemic_risk": "中等偏低，无墙要倒信号",
+        "signal_decay": ["算力/Token叙事从独占走向同质化", "6G题材短期已兑现", "混改红利消退"]
+      },
+      "conclusion": "好逻辑≠好投资，方向对但资金没来。等成交量放大+主力连续3日净流入+股价站回5日线上方三个条件同时出现。",
+      "key_variabls_ranked": ["Q2业绩验证", "Token/算力收入占比", "换帅后新战略", "资金态度转变", "6G进展"]
+    },
+    {
+      "id": "valuation-analyst",
+      "emoji": "🧮",
+      "title": "估值分析师",
+      "alias": "文衡价",
+      "methodology": "用PE Bands精确定价看盈利变化，不选'看起来便宜'的，选'盈利斜率向上'的。",
+      "key_findings": {
+        "pe_bands": {
+          "current_pe": 15.71,
+          "percentile": "25-30%",
+          "bands": [
+            {"percentile": "10%", "pe": 14, "price": 3.88},
+            {"percentile": "25%", "pe": 15, "price": 4.16},
+            {"percentile": "50%", "pe": 18, "price": 4.99},
+            {"percentile": "75%", "pe": 21, "price": 5.82}
+          ]
+        },
+        "eps_slope": {
+          "direction": "向下弯",
+          "history": [
+            {"year": "FY2024", "eps": 0.292, "yoy": "+46%"},
+            {"year": "FY2025", "eps": 0.292, "yoy": "0%"},
+            {"year": "FY2026E", "eps": 0.26, "yoy": "-11%"},
+            {"year": "FY2027E", "eps": 0.28, "yoy": "+8%"},
+            {"year": "FY2028E", "eps": 0.30, "yoy": "+7%"}
+          ],
+          "risk": "Q1实际-19%远超全年预期-10.35%，EPS下修概率大"
+        },
+        "peer_comparison": [
+          {"metric": "PE", "unicom": 15.71, "mobile": 15.67, "telecom": 17.25},
+          {"metric": "PB", "unicom": 0.80, "mobile": 1.50, "telecom": 1.17},
+          {"metric": "股息率", "unicom": "3.98%", "mobile": "4.87%", "telecom": "4.59%"},
+          {"metric": "FY2026E增速", "unicom": "-10.35%", "mobile": "-4.19%", "telecom": "-9.15%"}
+        ],
+        "peg_analysis": "不适用——增速在个位数/负数区间，分母太小/为负",
+        "valuation_trap_risk": "PE低+EPS下行=估值陷阱，跌的是EPS不是PE"
+      },
+      "conclusion": "中国联通当前不是值得主动出手的标的。PE Bands在下轨但EPS斜率向下弯。如果要做电信运营商红利配置，选中国移动。",
+      "position_advice": {
+        "already_holding": "维持低配不超过5%，等盈利拐点",
+        "not_holding": "不建议新建仓位",
+        "dividend_preference": "买移动不买联通",
+        "rebound_play": "等EPS斜率企稳再说"
+      }
+    },
+    {
+      "id": "contrarian-investor",
+      "emoji": "🏔️",
+      "title": "逆向投资人",
+      "alias": "坤候底",
+      "methodology": "大公司不会死，跌出来的机会分批买，PE回到高位就清仓。",
+      "key_findings": {
+        "big_company_check": {
+          "market_cap": "1360亿 ✅",
+          "industry_position": "三大运营商之一 ✅",
+          "going_concern": "央企不会退市 ✅",
+          "competition_floor": "三寡头有底线 ✅"
+        },
+        "three_cuts": [
+          {"cut": "增值税6%→9%", "nature": "永久性", "impact": "约117亿税负增加", "judgment": "要接受"},
+          {"cut": "AI叙事退潮", "nature": "情绪性", "impact": "资金撤退", "judgment": "会修复"},
+          {"cut": "传统业务见顶", "nature": "结构性", "impact": "营收增速0.7%", "judgment": "要时间"}
+        ],
+        "support_levels": [
+          {"batch": 1, "price": "4.30", "basis": "52周新低4.31", "strength": "⭐⭐⭐"},
+          {"batch": 2, "price": "4.16-4.20", "basis": "2024年9月周K平台", "strength": "⭐⭐⭐⭐"},
+          {"batch": 3, "price": "4.05", "basis": "2024年6月周K低点", "strength": "⭐⭐⭐⭐"},
+          {"batch": 4, "price": "3.96", "basis": "2024年2月极端低点", "strength": "⭐⭐⭐⭐"},
+          {"batch": 5, "price": "3.80", "basis": "整数关口", "strength": "⭐⭐⭐"},
+          {"batch": 6, "price": "3.58", "basis": "2024年1月历史恐慌底", "strength": "⭐⭐⭐⭐⭐"},
+          {"batch": "7-10", "price": "3.40→2.84", "basis": "历史密集成交区→极端底", "strength": "⭐⭐⭐⭐⭐"}
+        ],
+        "sell_signals": [
+          "牛市中后段运营商补涨到6元以上",
+          "PE回到18x以上",
+          "牛市第三波冲不动"
+        ],
+        "deep_trap_comfort": "最坏从4.30跌到3.58，第1份浮亏16.7%，但分批买综合成本约3.95，浮亏不到10%，4%股息在拿"
+      },
+      "conclusion": "安全边际够、弹性一般的逆向标的。大公司不会死✅，价格够便宜✅，支撑位清晰⚠️，利润拐点不确定⚠️，回归速度可能慢⚠️。分10批支撑位建仓，拿4%股息等利润拐点。",
+      "risk_honesty": "方法论在这只票上偏弱——更接近隆基（行业结构性问题）而非腾讯/平安（事件驱动恐慌），时间换空间效率可能不高"
+    },
+    {
+      "id": "fundamental-researcher",
+      "emoji": "🔬",
+      "title": "财报研究员",
+      "alias": "钊审财",
+      "methodology": "按季度跟踪财报验证，不追PPT战略，看不懂的不重仓。",
+      "key_findings": {
+        "revenue_profit": {
+          "fy2024": {"revenue": 3895.89, "revenue_yoy": "+4.56%", "net_profit": 90.30, "np_yoy": "+10.49%", "non_recurring_np": 66.99, "nr_np_yoy": "-10.60%"},
+          "fy2025": {"revenue": 3922.23, "revenue_yoy": "+0.68%", "net_profit": 91.27, "np_yoy": "+1.07%", "non_recurring_np": 76.86, "nr_np_yoy": "+14.73%"},
+          "q4_2025_issue": "Q4单季归母净利3.55亿（同比-48.71%），但扣非从亏损1.77亿改善至盈利"
+        },
+        "business_segments": {
+          "connectivity": {"users": "3.57亿户移动+1.29亿户宽带", "5g_penetration": "65%", "fusion_arpu": "超百元", "judgment": "基本盘稳但无增量想象力"},
+          "industry_internet": {"computing_pct": ">15%（约588亿）", "ai_growth": "+140%（基数不透明）", "5g_private": "123亿（+50%）", "iot": "7.2亿连接", "judgment": "方向对但验证不足，AI+140%绝对值不透明"},
+          "international": {"growth": "+9%", "note": "获卫星通信许可，体量小但值得关注"}
+        },
+        "biggest_concern": {
+          "issue": "应收账款",
+          "ar_to_profit": "709.53%（7倍多！）",
+          "turnover_decline": "10.97→7.98→6.41",
+          "gov_enterprise_pct": "71%→86%",
+          "industry_total": "三大运营商政企应收5年间600亿→2200亿"
+        },
+        "cashflow_dividend": {
+          "operating_cf": 914.11,
+          "free_cf": 373,
+          "fcf_growth": "+24.7%",
+          "dividend_per_share": {"2023": 0.132, "2024": 0.158, "2025": 0.1635},
+          "payout_ratio": "~55%"
+        },
+        "management": {
+          "chairman": "董昕，从中移动调来，风格稳健务实",
+          "strategy": "算力投资>175亿（占capex 35%+）、Token经营模式、7个百兆瓦级AIDC",
+          "assessment": "方向没错但执行力需验证，PPT战略→财报验证尚未完成"
+        }
+      },
+      "conclusion": "增速换挡期，基本面未恶化但增长动能减弱。应收账款是最大暗雷。5-10%观察仓，按季度跟踪，不扛不补。",
+      "stop_loss_conditions": ["应收账款周转率连续两季恶化", "扣非净利润出现同比下滑"],
+      "tracking_rhythm": ["每季度：扣非净利增速是否>10%", "每季度：应收账款周转率是否止住下滑", "半年度：算力/AI收入绝对值和利润贡献", "全年：分红是否继续提升"]
+    },
+    {
+      "id": "shortterm-surfer",
+      "emoji": "⚡",
+      "title": "短线冲浪手",
+      "alias": "磊追浪",
+      "methodology": "看当周主线和盘面资金，破5日线走人，不猜底。",
+      "key_findings": {
+        "weekly_theme": {
+          "main_line": "AI算力/光模块 > 半导体 > 6G概念 > 电力",
+          "telecom_position": "有逻辑没弹性缺资金，6G行情资金选设备不选运营商"
+        },
+        "kline_pattern": {
+          "type": "脉冲拉升→持续回落",
+          "detail": "5/18-19冲高5.11后连跌6天至4.35（-12.1%），所有均线失守",
+          "recent_kline": [
+            {"date": "5/19", "close": 4.95, "turnover": "2.08%", "note": "冲高5.11回落"},
+            {"date": "5/22", "close": 4.46, "turnover": "1.27%", "note": "三连阴"},
+            {"date": "5/28", "close": 4.35, "turnover": "0.49%", "note": "触及52周新低4.31"}
+          ]
+        },
+        "fund_flow": {
+          "5d_main_net": "-7.88亿",
+          "margin_net_sell": "-3807万（5/27）",
+          "turnover_rate": "0.49%（低迷）",
+          "volume_ratio": 0.53
+        },
+        "chip_analysis": {
+          "avg_cost": 5.13,
+          "profit_ratio": "0.48%（99.5%筹码亏损）",
+          "concentration_90": 11.77,
+          "concentration_70": 8.94
+        },
+        "peer_comparison": {
+          "mobile": "5日线在上方✅，YTD -2.84%",
+          "telecom": "5日线在下方❌，YTD -5.24%",
+          "unicom": "5日线在下方❌，YTD -14.87%垫底"
+        },
+        "stop_loss_levels": [
+          {"level": "MA5", "price": 4.42, "status": "已跌破❌"},
+          {"level": "MA10", "price": 4.59, "status": "已跌破❌"},
+          {"level": "关键支撑", "price": 4.31, "status": "52周新低"},
+          {"level": "极端支撑", "price": "~4.10", "status": "2026年3月低点区域"}
+        ]
+      },
+      "conclusion": "现在不是中国联通的右侧入场时机。6G资金选设备不选运营商，K线形态是出货不是蓄势，筹码全线套牢反弹阻力极大。",
+      "right_side_signals": ["连续2-3天放量站上MA5（4.42以上）", "运营商板块集体异动（移动涨停或电信放量大涨）", "6G政策进一步催化", "集合竞价出现异动（9:25封单量明显放大）"],
+      "action_by_situation": {
+        "空仓": "不进，没有右侧信号不猜底",
+        "套在4.5以上": "反弹到4.4-4.5减仓",
+        "套在4.3-4.4": "设4.30止损",
+        "想做左侧": "等4.10-4.20区间"
+      }
+    }
+  ],
+  "module3_deep_thinking": {
+    "host_notes": [
+      {
+        "num": "01",
+        "title": "被忽视的差异化真空",
+        "content": "6位成员都认同产业方向没问题，但没人能回答——联通在算力/Token赛道里的差异化优势到底是什么？移动有规模、电信有天翼云品牌，联通有什么？混改伙伴协同说了几年，财报上看不到显著差异。一个方向对但卡位不突出的标的，涨的时候吃尾巴、跌的时候打头阵——这就是联通YTD -14.87%而移动只跌-2.84%的原因。"
+      },
+      {
+        "num": "02",
+        "title": "EPS下修概率被低估",
+        "content": "估值分析师指出Q1实际下滑19%远超全年一致预期的-10.35%，后续大概率要下修。如果FY2026 EPS从0.26再下修到0.23-0.24，当前4.35元对应的PE就不是15.7x而是18-19x——'便宜'的幻觉就消失了。"
+      },
+      {
+        "num": "03",
+        "title": "应收账款是'灰犀牛'",
+        "content": "财报研究员挖出的709%应收/利润比不是小问题。政企业务营收好看、回款难看是行业通病，但联通扩张最快、回款最差。这和当年PPP模式下环保企业如出一辙——增长靠应收堆，一旦回款出问题就是利润断崖。"
+      },
+      {
+        "num": "04",
+        "title": "'时间'定价的分歧",
+        "content": "逆向投资人说'只亏时间不亏钱'，估值分析师说'EPS向下弯=估值陷阱'——前者假设时间成本为零（反正有4%股息），后者假设时间就是风险（EPS可能继续恶化）。我倾向于后者更严谨——如果利润持续下滑，股息也会跟着缩水，'只亏时间'的前提并不牢靠。"
+      },
+      {
+        "num": "05",
+        "title": "增值税永久性影响讨论不足",
+        "content": "6%→9%意味着约117亿税负增加，这不是周期性而是结构性的。即使联通能部分传导到价格端，在携号转网和价格战环境下，提价空间极有限。这个'永久性利润天花板压低'应更充分地反映在估值中。"
+      }
+    ],
+    "host_qa": [
+      {
+        "tag": "🔑 关键",
+        "question": "Q2业绩是最重要的验证节点——Q1净利降18%是单季波动还是趋势起点？",
+        "answer": "如果Q2继续下滑15%以上，FY2026 EPS下修概率极大，当前'便宜'的估值就不成立了。反之，如果Q2企稳或降幅收窄，EPS斜率拐头的预期就能启动估值修复。从产业视角看，增值税调整的影响是永久性的，Q2可能仍承压；从财报视角看，扣非净利在改善，关键看Q2能否维持这一趋势。"
+      },
+      {
+        "tag": "⚠️ 易混淆",
+        "question": "同一个PB 0.80破净，逆向投资人看'打折买资产'，估值分析师看'资产回报率太低'——谁对？",
+        "answer": "区别在于联通的净资产大量是通信设备和固定资产，折旧快、变现难——PB低不代表你真的能按净资产价格清算这些资产。PB=ROE×PE/某个比率，0.80的PB配5%的ROE，说明市场给这些资产的定价是'赚钱效率太低'。破净有破净的道理，不是纯粹的安全边际。"
+      },
+      {
+        "tag": "🔍 易疏忽",
+        "question": "联通2025年扣非净利+14.73%但归母净利只+1.07%——这意味着什么？",
+        "answer": "说明2024年有非经常性损益虚增了归母利润，而2025年经营质量其实在改善。但2026Q1的-18%下滑是否也有非经常性因素？这个数据拆分值得按季度跟踪。不能只看归母净利增速就下结论'基本面恶化'。"
+      },
+      {
+        "tag": "⭐ 重要",
+        "question": "如果要做电信运营商配置，为什么不选中国移动？",
+        "answer": "移动PE几乎一样（15.67x vs 15.71x），但股息率4.87%更高、ROE约10%更高、FY2026E增速-4.19%更稳、5日线还在上方。联通唯一优于移动的是PB更低（0.80 vs 1.50），但PB低是因为ROE低——这不是优势，是劣势。"
+      },
+      {
+        "tag": "🔍 易疏忽",
+        "question": "6G频谱获批当天中兴涨停但三家运营商几乎没跟——这个信号意味着什么？",
+        "answer": "说明市场把6G当设备商的题材来炒，运营商只是搭台的角色。从产业链传导看，6G周期中受益顺序是基站设备→光模块→天线射频→运营商，运营商在最后一环。这意味着6G行情对联通的传导可能非常弱。"
+      }
+    ]
+  },
+  "module4_follow_up": {
+    "key_variables_table": [
+      {
+        "variable": "股价",
+        "current": "4.35元",
+        "reassessment_triggers": [
+          {"threshold": "跌破4.30", "implication": "52周新低失守，短线支撑崩塌"},
+          {"threshold": "跌破4.16", "implication": "中期支撑位失守，进入深度调整"},
+          {"threshold": "站回4.65（MA60）", "implication": "技术面企稳信号"}
+        ]
+      },
+      {
+        "variable": "PE(TTM)",
+        "current": "15.71x",
+        "reassessment_triggers": [
+          {"threshold": "回升至18x以上（约5.0元）", "implication": "估值修复启动"},
+          {"threshold": "降至14x以下（约3.65元）", "implication": "EPS加速恶化"}
+        ]
+      },
+      {
+        "variable": "FY2026E EPS",
+        "current": "0.26元",
+        "reassessment_triggers": [
+          {"threshold": "下修至0.23以下", "implication": "盈利逻辑实质性破坏，'便宜'变'贵'"},
+          {"threshold": "上修至0.28以上", "implication": "拐点确认"}
+        ]
+      },
+      {
+        "variable": "应收账款周转率",
+        "current": "6.41",
+        "reassessment_triggers": [
+          {"threshold": "降至5.5以下", "implication": "回款恶化加速，营收质量存疑"},
+          {"threshold": "回升至7.0以上", "implication": "改善确认"}
+        ]
+      },
+      {
+        "variable": "5日主力资金净流入",
+        "current": "-7.88亿",
+        "reassessment_triggers": [
+          {"threshold": "连续3日净流入且单日>1亿", "implication": "资本信号从灭转亮"},
+          {"threshold": "连续5日净流出>2亿", "implication": "加速离场"}
+        ]
+      },
+      {
+        "variable": "股息率",
+        "current": "3.98%",
+        "reassessment_triggers": [
+          {"threshold": "升至4.5%以上（股价跌至3.85以下）", "implication": "安全边际显著增强"},
+          {"threshold": "降至3.5%以下", "implication": "分红缩水或股价反弹过度"}
+        ]
+      }
+    ],
+    "invalidation_conditions": [
+      {
+        "num": "01",
+        "condition": "FY2026全年净利润同比下降超过20%——与当前一致预期-10.35%严重偏离，则'盈利低谷已过'的假设被推翻，本次综合视角可能被推翻"
+      },
+      {
+        "num": "02",
+        "condition": "应收账款周转率连续三个季度恶化——政企业务增长质量实质性恶化，'增速换挡'叙事与财报数据矛盾，则'基本面未恶化'的判断需要修正"
+      },
+      {
+        "num": "03",
+        "condition": "中国移动跌破5日均线且运营商板块整体走弱——龙头失守意味着板块逻辑被市场否定，则'产业方向对'的前提可能失效"
+      },
+      {
+        "num": "04",
+        "condition": "国家出台针对算力/AI的专项运营商扶持政策且联通获得差异化定位——若政策催化打破'运营商同质化'格局，则本次'联通差异化不足'的核心判断可能被推翻"
+      },
+      {
+        "num": "05",
+        "condition": "增值税从9%回调或获得专项补贴——则永久性利空假设动摇，利润天花板重新打开，估值需重新评估"
+      }
+    ]
+  }
+}

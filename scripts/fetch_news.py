@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.join(ROOT, "scripts"))
 from db_helper import get_watchlist, get_db
 
 NODE = r'C:\Users\28312\.workbuddy\binaries\node\versions\22.12.0\node.exe'
-WESTOCK = r'C:\Users\28312\.workbuddy\plugins\marketplaces\cb_teams_marketplace\plugins\finance-data\skills\westock-data'
+WESTOCK = r'C:\Users\28312\.workbuddy\plugins\marketplaces\experts\plugins\stock-partner-team\skills\westock-data'
 SCRIPT = 'scripts/index.js'
 MAX_NEWS_PER_STOCK = 20
 
