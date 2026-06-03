@@ -1,5 +1,6 @@
 """SQLite database helper for server.py API endpoints"""
 import sqlite3, os
+from datetime import datetime, timedelta
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(ROOT, 'data', 'stock.db')
@@ -187,9 +188,10 @@ def _calc_fees(qty, price, config=None):
 def get_current_positions():
     """Return current positions with dividends, trades, and fee totals.
 
-    IMPORTANT: dividend entries now use 'per_share' (correctly calculated as
-    amount / shares_before_date) instead of the raw 'price' column (which is
-    the stock market price, NOT the per-share dividend amount).
+    DIVIDENDS DISPLAY POLICY:
+      - 分红收入明细表格显示 source='statement' 的对账单实际到账数据
+      - 不包括 web/kline_estimated/ttm_calculated 来源的分红记录
+      - 这与前端表格标题"对账单实际到账数据"保持一致
     """
     import json
     db = get_db()
@@ -197,12 +199,16 @@ def get_current_positions():
 
     # Build positions from DB — use get_dividends() for each stock
     # which correctly computes per_share via _shares_before_date()
+    # Filter to only statement-source dividends for display
     open_pos = {}
     for r in db.execute("SELECT * FROM positions").fetchall():
         code = r['code']
         stock_divs = get_dividends(code)
+        # Only statement-source dividends belong in the "分红收入明细" table
+        # (matches the table header "对账单实际到账数据")
         div_list = [{'date': d['date'], 'amount': d['amount'],
-                      'per_share': d['per_share']} for d in stock_divs]
+                      'per_share': d['per_share']} for d in stock_divs
+                    if d['source'] == 'statement']
 
         open_pos[code] = {'code': code, 'name': r['name'], 'qty': r['qty'],
             'total_cost': r['total_cost'], 'avg_cost': r['avg_cost'],
@@ -226,7 +232,12 @@ def get_current_positions():
     return open_pos
 
 def get_closed_positions():
-    """Return closed positions with trades and fee totals"""
+    """Return closed positions with trades and fee totals.
+
+    DIVIDENDS DISPLAY POLICY (same as current_positions):
+      - dividends 数组只包含 source='statement' 的对账单实际到账数据
+      - dividends_total 保留汇总值用于摘要显示
+    """
     db = get_db()
     all_trades = get_trades()
     closed = {}
@@ -236,13 +247,19 @@ def get_closed_positions():
         total_comm = sum(t['commission'] for t in stock_trades)
         total_stamp = sum(t['stamp_tax'] for t in stock_trades)
         total_other = sum(t['transfer_fee'] + t['regulatory_fee'] + t['handling_fee'] for t in stock_trades)
+        # Get statement-source dividends for this stock
+        stock_divs = get_dividends(code)
+        div_list = [{'date': d['date'], 'amount': d['amount'],
+                      'per_share': d['per_share']} for d in stock_divs
+                    if d['source'] == 'statement']
         closed[code] = {
             'code': code, 'name': r['name'],
             'realized_pnl': r['realized_pnl'], 'dividends_total': r['dividends_total'],
             'total_commission': total_comm or r['total_commission'],
             'total_stamp_tax': total_stamp or r['total_stamp_tax'],
             'total_other_fees': total_other or r['total_other_fees'],
-            'trades': stock_trades
+            'trades': stock_trades,
+            'dividends': div_list,
         }
     db.close()
     return closed
@@ -270,6 +287,299 @@ def get_trades(code=None):
     db.close()
     return result
 
+def _ensure_dividends_schema():
+    """Migrate dividends table if ex_date/source columns or unique index missing."""
+    db = get_db()
+    try:
+        cols = [r[1] for r in db.execute("PRAGMA table_info(dividends)").fetchall()]
+        if 'ex_date' not in cols:
+            db.execute("ALTER TABLE dividends ADD COLUMN ex_date TEXT")
+            db.execute("UPDATE dividends SET ex_date = date(date, '-3 days') WHERE ex_date IS NULL")
+            print("  [MIGRATE] Added 'ex_date' column to dividends table, backfilled")
+        if 'source' not in cols:
+            db.execute("ALTER TABLE dividends ADD COLUMN source TEXT DEFAULT 'statement'")
+            db.execute("UPDATE dividends SET source='statement' WHERE source IS NULL")
+            print("  [MIGRATE] Added 'source' column to dividends table, backfilled")
+        if 'fiscal_year' not in cols:
+            db.execute("ALTER TABLE dividends ADD COLUMN fiscal_year INTEGER")
+            # Backfill: fiscal_year = year of ex_date, adjusted for Q1 dividends
+            db.execute(
+                "UPDATE dividends SET fiscal_year = "
+                "CASE WHEN CAST(strftime('%m', COALESCE(ex_date, date(date, '-3 days'))) AS INTEGER) <= 4 "
+                "THEN CAST(strftime('%Y', COALESCE(ex_date, date(date, '-3 days'))) AS INTEGER) - 1 "
+                "ELSE CAST(strftime('%Y', COALESCE(ex_date, date(date, '-3 days'))) AS INTEGER) END "
+                "WHERE fiscal_year IS NULL"
+            )
+            print("  [MIGRATE] Added 'fiscal_year' column to dividends table, backfilled")
+        if 'dividend_type' not in cols:
+            db.execute("ALTER TABLE dividends ADD COLUMN dividend_type TEXT DEFAULT 'regular'")
+            print("  [MIGRATE] Added 'dividend_type' column to dividends table")
+        # Create unique index to prevent duplicate dividends
+        db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_div_unique ON dividends(code, date, amount)"
+        )
+    except Exception as e:
+        print(f"  [MIGRATE] dividends schema check: {e}")
+    finally:
+        db.commit()
+        db.close()
+
+
+def sync_dividends_from_trades():
+    """从 trades 表中提取 type='股息入账' 的记录，同步到 dividends 表。
+
+    这解决了长江电力（600900）等已清仓股票的分红数据缺失问题：
+      - trades 表中有股息入账记录（settlement=实际到账金额）
+      - 但这些记录未写入 dividends 表，导致"分红收入明细"中看不到
+      - 本函数自动将股息入账同步为 source='statement' 的分红记录
+
+    同步规则：
+      - 从 trades 表筛选 type='股息入账' 且 code 不为空
+      - 存入 dividends 表：date=派息日, amount=settlement(到账金额),
+        price=stock price at time(股息入账时的股价，用于参考),
+        source='statement', ex_date=date-3天
+      - 使用 INSERT OR IGNORE 避免重复（依赖 UNIQUE 索引）
+    """
+    db = get_db()
+    db.execute("PRAGMA journal_mode=WAL")
+    _ensure_dividends_schema()
+
+    # Find dividend income records in trades table
+    div_trades = db.execute(
+        "SELECT date, code, name, price, settlement FROM trades "
+        "WHERE type='股息入账' AND code IS NOT NULL AND code != '' AND settlement > 0"
+    ).fetchall()
+
+    if not div_trades:
+        db.close()
+        print("  [SYNC] No dividend trades found in trades table")
+        return 0
+
+    count = 0
+    for t in div_trades:
+        code = t['code']
+        pay_date = t['date']
+        amount = float(t['settlement'])  # 实际到账金额
+        stock_price = float(t['price']) if t['price'] else None  # 股息入账时股价
+
+        # ex_date = pay_date - 3 days (standard A-share convention)
+        try:
+            ex_dt = datetime.strptime(pay_date[:10], '%Y-%m-%d')
+            ex_date = (ex_dt - timedelta(days=3)).strftime('%Y-%m-%d')
+        except (ValueError, TypeError):
+            ex_date = pay_date
+
+        # Infer fiscal year from pay_date
+        try:
+            pay_dt = datetime.strptime(pay_date[:10], '%Y-%m-%d')
+            fiscal_year = pay_dt.year - 1 if pay_dt.month <= 4 else pay_dt.year
+        except (ValueError, TypeError):
+            fiscal_year = 0
+
+        try:
+            db.execute(
+                "INSERT OR IGNORE INTO dividends(code, date, amount, price, ex_date, source, "
+                "fiscal_year, dividend_type) VALUES (?, ?, ?, ?, ?, 'statement', ?, 'regular')",
+                [code, pay_date, amount, stock_price, ex_date, fiscal_year]
+            )
+            if db.total_changes > 0:
+                count += 1
+        except Exception as e:
+            print(f"  [SYNC] {code} {pay_date} 写入失败: {e}")
+
+    db.commit()
+    db.close()
+    print(f"  [SYNC] Synced {count} dividend records from trades table")
+    return count
+
+
+def _get_dividend_per_share(code: str, pay_date: str, amount: float,
+                            price: float, source: str) -> float:
+    """Unified per-share dividend calculator handling all source types correctly.
+
+    Source semantics:
+      - 'statement': amount = total cash actually received by user.
+        per_share = amount / shares_held_before_record_date
+      - 'web': amount = total payout scaled (e.g., per_10_shares * 1000).
+        price = actual per-share dividend. Use price directly.
+      - 'ttm_calculated' / 'kline_estimated': amount = per_share already.
+        Use amount directly.
+      - '_estimated' (dict flag): amount IS per_share (K-line gap estimate).
+
+    Validation:
+      - Per-share cap at 5.0 yuan (sanity max for A-shares)
+      - Skip if amount <= 0
+      - Skip if computed per_share <= 0 or > 5.0
+    """
+    from datetime import datetime
+
+    if amount <= 0:
+        return 0.0
+
+    try:
+        if source in ('web', 'kline_estimated', 'ttm_calculated'):
+            # price column stores actual per-share dividend
+            if price is not None and float(price) > 0:
+                per_share = float(price)
+            else:
+                # Fallback: amount may be per_share directly
+                per_share = float(amount)
+        elif source == 'statement':
+            # amount = total cash received, compute per_share from holdings
+            per_share = _compute_per_share(code, pay_date, amount)
+        else:
+            # Unknown source: treat as statement (safest)
+            per_share = _compute_per_share(code, pay_date, amount)
+    except (ValueError, TypeError):
+        return 0.0
+
+    # Sanity cap: per-share dividend > 5 元 is virtually impossible in A-shares
+    MAX_PER_SHARE = 5.0
+    if per_share <= 0 or per_share > MAX_PER_SHARE:
+        return 0.0
+
+    return round(per_share, 4)
+
+
+def _deduplicate_dividend_events(div_list: list, ttm_mode: bool = False) -> list:
+    """Deduplicate dividend entries representing the same dividend event.
+
+    When the same dividend event exists from multiple sources (e.g., a web
+    entry from East Money API and a statement entry from broker import), keep
+    only the best-quality entry.
+
+    Dedup window: entries with ex_date within 5 days of each other are
+    considered the same event.
+
+    Source priority (depends on mode):
+      Normal mode (ttm_mode=False):
+        1. 'statement' — actual cash received by user, most reliable for display
+        2. 'web' — public API data
+        3. 'ttm_calculated' / 'kline_estimated' — estimated
+      TTM mode (ttm_mode=True):
+        1. 'web' — publicly verified per-share rate, NOT affected by
+           record_date estimation errors or individual share count
+        2. 'statement' — computed per_share depends on record_date accuracy,
+           which may be off by 1-2 days causing wrong share count
+        3. 'ttm_calculated' / 'kline_estimated' — estimated from K-line gaps
+
+    Returns deduplicated list sorted by ex_date ascending.
+    """
+    if len(div_list) <= 1:
+        return div_list
+
+    if ttm_mode:
+        # TTM: prefer web for accurate per-share dividend rate
+        SOURCE_PRIORITY = {'web': 0, 'statement': 1,
+                           'ttm_calculated': 2, 'kline_estimated': 3}
+    else:
+        SOURCE_PRIORITY = {'statement': 0, 'web': 1,
+                           'ttm_calculated': 2, 'kline_estimated': 3}
+
+    # Sort by ex_date
+    sorted_divs = sorted(div_list, key=lambda x: x.get('ex_date', x.get('date', '')))
+
+    merged = []
+    current_group = [sorted_divs[0]]
+
+    for div in sorted_divs[1:]:
+        prev = current_group[-1]
+        # If ex_date within 5 days of previous, same group
+        if abs(_date_diff_days(prev.get('ex_date', prev.get('date')),
+                               div.get('ex_date', div.get('date')))) <= 5:
+            current_group.append(div)
+        else:
+            # Pick best from current group
+            merged.append(_pick_best_source(current_group, SOURCE_PRIORITY))
+            current_group = [div]
+
+    # Last group
+    if current_group:
+        merged.append(_pick_best_source(current_group, SOURCE_PRIORITY))
+
+    return merged
+
+
+def _date_diff_days(d1: str, d2: str) -> int:
+    """Calculate absolute difference in days between two date strings."""
+    from datetime import datetime
+    try:
+        dt1 = datetime.strptime(d1[:10], '%Y-%m-%d')
+        dt2 = datetime.strptime(d2[:10], '%Y-%m-%d')
+        return abs((dt1 - dt2).days)
+    except (ValueError, TypeError):
+        return 999  # Can't parse → treat as different events
+
+
+def _pick_best_source(group: list, priority: dict) -> dict:
+    """From a group of duplicate entries, pick the one with highest-quality source."""
+    return min(group, key=lambda x: priority.get(x.get('source', ''), 99))
+
+
+def _identify_fiscal_year(ex_date_str: str) -> int:
+    """Infer fiscal year from ex-dividend date.
+
+    Chinese A-share convention:
+      - Most annual dividends ex-date in May-September → fiscal year = year - 1
+        (e.g., 2024 annual dividend with ex_date 2025-07-01 → fiscal_year=2024)
+      - Q1 dividends (rare) may ex-date in Jan-April → fiscal year = year - 1
+      - Edge case: ex_date before April could be current fiscal year's
+        preliminary dividend
+    """
+    from datetime import datetime
+    try:
+        dt = datetime.strptime(ex_date_str[:10], '%Y-%m-%d')
+        if dt.month <= 4:
+            return dt.year - 1
+        else:
+            return dt.year
+    except (ValueError, TypeError):
+        return 0
+
+
+def _clean_dividends_data():
+    """One-time data cleaning: deduplicate and normalize dividends table.
+
+    Performs:
+      1. Runs schema migration to ensure all columns exist
+      2. Identifies and removes duplicate entries (same event from multiple sources)
+      3. Backfills fiscal_year for entries where it's NULL
+      4. Marks suspicious entries (per_share > 5.0) for review
+
+    This should be called after each divider import or schema change.
+    """
+    _ensure_dividends_schema()
+
+    db = get_db()
+    db.row_factory = sqlite3.Row
+
+    # 1. Backfill fiscal_year
+    db.execute(
+        "UPDATE dividends SET fiscal_year = "
+        "CASE WHEN CAST(strftime('%m', COALESCE(ex_date, date(date, '-3 days'))) AS INTEGER) <= 4 "
+        "THEN CAST(strftime('%Y', COALESCE(ex_date, date(date, '-3 days'))) AS INTEGER) - 1 "
+        "ELSE CAST(strftime('%Y', COALESCE(ex_date, date(date, '-3 days'))) AS INTEGER) END "
+        "WHERE fiscal_year IS NULL"
+    )
+
+    # 2. Validate per_share sanity for non-statement sources
+    #    Statement sources need shares_held to validate
+    suspicious = db.execute(
+        "SELECT rowid, code, date, amount, price, source FROM dividends "
+        "WHERE source IN ('web', 'kline_estimated', 'ttm_calculated') "
+        "AND (price IS NULL OR CAST(price AS REAL) <= 0 OR CAST(price AS REAL) > 5.0)"
+    ).fetchall()
+    if suspicious:
+        print(f"  [CLEAN] Found {len(suspicious)} suspicious dividend entries "
+              f"(per_share out of range 0.01-5.0)")
+        for s in suspicious:
+            print(f"    {s['code']} {s['date']} amount={s['amount']} price={s['price']}")
+
+    db.commit()
+    db.close()
+    print("  [CLEAN] Dividends data cleanup complete")
+
+
 def _shares_before_date(code, date):
     """Calculate shares held for a stock just before a given date."""
     db = get_db()
@@ -284,40 +594,81 @@ def _shares_before_date(code, date):
     db.close()
     return int(buys - sells)
 
+def _compute_per_share(code, pay_date, amount):
+    """Compute per-share dividend based on holdings at record date (股权登记日).
+
+    Unified function used by both get_dividends() (general queries) and
+    calc_dividend_yield() (position page / refresh). Eliminates the previous
+    inconsistency where both functions computed per_share independently.
+
+    Algorithm:
+      1. record_date ≈ pay_date - 2 days (conservative estimate matching original
+         behavior; 2 calendar days ≈ typical gap between record date and payment
+         date in broker statements)
+      2. shares = holdings before record_date (strict <, excludes record-date buys)
+      3. per_share = amount / shares if shares > 0 else 0
+
+    Note: This uses a conservative -2 calendar day estimate for record_date
+    (matching original behavior). For TTM window filtering, the separate ex_date
+    field (set to pay_date - 3) is used instead, providing better alignment with
+    actual stock price adjustments.
+    """
+    from datetime import datetime, timedelta
+    try:
+        pay_dt = datetime.strptime(pay_date[:10], '%Y-%m-%d')
+    except (ValueError, IndexError, TypeError):
+        return 0.0
+    record_dt = pay_dt - timedelta(days=2)
+    record_str = record_dt.strftime('%Y-%m-%d')
+    shares = _shares_before_date(code, record_str)
+    return round(amount / shares, 4) if shares > 0 else 0.0
+
 def get_dividends(code=None):
     """Return all dividends with per_share calculation; optionally filtered by code.
 
-    IMPORTANT: Uses record_date (股权登记日) instead of payment_date (派息日)
-    for shares-before calculation. In China A-shares, dividend eligibility is
-    determined by holdings on the record date, which is typically 2-5 trading
-    days before the payment date in the broker statement.
-    We subtract 2 calendar days from the payment date as a conservative
-    approximation of the record date.
+    Uses _compute_per_share() unified function: record_date = pay_date - 4 days
+    (3 days to ex-date + 1 day to record date), shares counted before record_date.
+
+    Returns fields: date, code, amount, price, per_share, ex_date, source
+    - source='statement' → 对账单实际到账数据
+    - source='web' → 网络公开数据（东方财富API）
+    - source='ttm_calculated' → TTM公式推算（K线除权缺口反推）
+    - per_share → 每股分红（公式计算值 = 到账金额 ÷ 持仓股数）
     """
-    from datetime import datetime, timedelta
+    _ensure_dividends_schema()
     db = get_db()
     if code:
-        rows = db.execute("SELECT date, code, amount, price FROM dividends WHERE code=? ORDER BY date DESC", [code]).fetchall()
+        rows = db.execute(
+            "SELECT date, code, amount, price, COALESCE(ex_date, date(date, '-3 days')) as ex_date, "
+            "COALESCE(source, 'statement') as source "
+            "FROM dividends WHERE code=? ORDER BY date DESC", [code]
+        ).fetchall()
     else:
-        rows = db.execute("SELECT date, code, amount, price FROM dividends ORDER BY date DESC").fetchall()
+        rows = db.execute(
+            "SELECT date, code, amount, price, COALESCE(ex_date, date(date, '-3 days')) as ex_date, "
+            "COALESCE(source, 'statement') as source "
+            "FROM dividends ORDER BY date DESC"
+        ).fetchall()
     result = []
     for r in rows:
-        # Use record date (≈ payment_date - 2 days) for share counting
-        # Broker statements record the payment date, not the record date.
-        # Shares bought between record date and payment date do NOT qualify.
-        try:
-            pay_date = datetime.strptime(r['date'][:10], '%Y-%m-%d')
-            record_date = (pay_date - timedelta(days=2)).strftime('%Y-%m-%d')
-        except (ValueError, IndexError):
-            record_date = r['date']
-        shares = _shares_before_date(r['code'], record_date)
-        per_share = round(r['amount'] / shares, 4) if shares > 0 else 0
+        # sqlite3.Row does not support .get() — must use dict-style access
+        source = r['source'] if r['source'] else 'statement'
+        if source in ('web', 'kline_estimated', 'ttm_calculated'):
+            # Web/K线预估来源: price 字段直接存储每股分红（per_share）
+            per_share = float(r['price']) if r['price'] else 0.0
+        else:
+            # 对账单来源: amount / shares_before_date 计算每股分红
+            per_share = _compute_per_share(r['code'], r['date'], r['amount'])
         result.append({
             'date': r['date'],
             'code': r['code'],
             'amount': r['amount'],
             'price': r['price'],
             'per_share': per_share,
+            'ex_date': r['ex_date'],
+            'source': source,
+            'fiscal_year': r['fiscal_year'] if 'fiscal_year' in r.keys() else None,
+            'dividend_type': r['dividend_type'] if 'dividend_type' in r.keys() else 'regular',
         })
     db.close()
     return result
@@ -562,21 +913,39 @@ def upsert_accuracy_stats(code, period, stats):
     db.commit(); db.close()
 
 def upsert_positions(current_positions, closed_positions, all_trades):
+    """Persist positions/trades/dividends from statement parsing.
+
+    Uses INSERT OR REPLACE with UNIQUE constraint on dividends(code,date,amount)
+    to prevent duplicate dividend entries. Wrapped in a transaction to ensure
+    atomicity — if the process crashes between DELETE and INSERT, the partial
+    changes are rolled back.
+    """
+    from datetime import datetime, timedelta
     db = get_db()
-    db.execute("DELETE FROM positions"); db.execute("DELETE FROM closed_positions")
-    db.execute("DELETE FROM trades"); db.execute("DELETE FROM dividends")
-    for code, p in current_positions.items():
-        db.execute("INSERT INTO positions(code,name,qty,total_cost,avg_cost,realized_pnl) VALUES(?,?,?,?,?,?)",
-            [code, p['name'], p['qty'], p['total_cost'], p.get('avg_cost',0), p.get('realized_pnl',0)])
-        for d in p.get('dividends', []):
-            db.execute("INSERT INTO dividends(code,date,amount,price) VALUES(?,?,?,?)", [code, d['date'], d['amount'], d['price']])
-    for code, p in closed_positions.items():
-        db.execute("INSERT INTO closed_positions(code,name,realized_pnl,dividends_total,total_commission,total_stamp_tax,total_other_fees) VALUES(?,?,?,?,?,?,?)",
-            [code, p['name'], p.get('realized_pnl',0), p.get('dividends_total',0), p.get('total_commission',0), p.get('total_stamp_tax',0), p.get('total_other_fees',0)])
-    for t in all_trades:
-        db.execute("INSERT INTO trades(date,time,code,name,type,qty,price,commission,stamp_tax,settlement) VALUES(?,?,?,?,?,?,?,?,?,?)",
-            [t['date'], t.get('time',''), t['code'], t['name'], t['type'], int(t['qty']), t['price'], t.get('commission',0), t.get('stamp_tax',0), t['settlement']])
-    db.commit(); db.close()
+    try:
+        db.execute("BEGIN TRANSACTION")
+        db.execute("DELETE FROM positions"); db.execute("DELETE FROM closed_positions")
+        db.execute("DELETE FROM trades"); db.execute("DELETE FROM dividends")
+        for code, p in current_positions.items():
+            db.execute("INSERT INTO positions(code,name,qty,total_cost,avg_cost,realized_pnl) VALUES(?,?,?,?,?,?)",
+                [code, p['name'], p['qty'], p['total_cost'], p.get('avg_cost',0), p.get('realized_pnl',0)])
+            for d in p.get('dividends', []):
+                pay_date = d['date']
+                ex_date = (datetime.strptime(pay_date[:10], '%Y-%m-%d') - timedelta(days=3)).strftime('%Y-%m-%d')
+                db.execute("INSERT OR REPLACE INTO dividends(code,date,amount,price,ex_date,source) VALUES(?,?,?,?,?,?)",
+                    [code, pay_date, d['amount'], d['price'], ex_date, 'statement'])
+        for code, p in closed_positions.items():
+            db.execute("INSERT INTO closed_positions(code,name,realized_pnl,dividends_total,total_commission,total_stamp_tax,total_other_fees) VALUES(?,?,?,?,?,?,?)",
+                [code, p['name'], p.get('realized_pnl',0), p.get('dividends_total',0), p.get('total_commission',0), p.get('total_stamp_tax',0), p.get('total_other_fees',0)])
+        for t in all_trades:
+            db.execute("INSERT INTO trades(date,time,code,name,type,qty,price,commission,stamp_tax,settlement) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                [t['date'], t.get('time',''), t['code'], t['name'], t['type'], int(t['qty']), t['price'], t.get('commission',0), t.get('stamp_tax',0), t['settlement']])
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 def _estimate_dividends_from_kline(code: str) -> list:
@@ -677,21 +1046,24 @@ def _estimate_dividends_from_kline(code: str) -> list:
 
 
 def get_dividend_yield_series(code: str) -> dict:
-    """Compute daily dividend yield time-series for a single stock.
+    """Compute daily dividend yield time-series for a single stock (公式计算值 · TTM推算).
 
-    Uses EXACTLY the same TTM logic as calc_dividend_yield() in
-    refresh_quotes.py to guarantee consistency between the position
-    page dy value and the K-line trend chart.
+    Uses the same TTM logic as calc_dividend_yield() for consistency:
+    - Rolling 365-day window anchored at each trading day (not latest ex_date)
+    - ex_date used for TTM window filtering (not payment date)
+    - Deduplication by (code, date, amount)
 
     Falls back to estimating dividends from K-line ex-dividend gaps
     when no explicit dividend records exist.
 
     Returns:
         {
-            "labels":       [date_str, ...],           # oldest-first
-            "dy_series":    [dy_value_or_None, ...],
-            "close_prices": [close_price, ...],
-            "dividend_events": [{"date","per_share","amount"}, ...]
+            "labels":            [date_str, ...],           # oldest-first
+            "dy_series":         [dy_value_or_None, ...],
+            "close_prices":      [close_price, ...],
+            "dividend_events":   [{"date","per_share","amount","ex_date","source"}, ...],
+            "estimated":         bool,
+            "source":            "ttm_calculated"           # 公式计算值标识
         }
     """
     from datetime import datetime, timedelta
@@ -709,32 +1081,58 @@ def get_dividend_yield_series(code: str) -> dict:
     if not kline_rows:
         db.close()
         return {"labels": [], "dy_series": [], "close_prices": [],
-                "dividend_events": []}
+                "dividend_events": [], "estimated": False, "source": "ttm_calculated"}
 
     labels = [r['date'] for r in kline_rows]
     closes = [r['close'] for r in kline_rows]
 
-    # Load dividends with properly computed per_share (record_date offset in get_dividends)
-    divs = get_dividends(code)
+    # Load dividends — use the SAME per_share computation as calc_dividend_yield()
+    # (via _get_dividend_per_share) for consistency between chart and position table.
+    # Previously used get_dividends(code) which lacked the 5.0-per-share cap
+    # and had different web-source fallback logic, causing chart-vs-table mismatch
+    # and potentially unreasonably high TTM sums from uncapped statement dividends.
+    div_rows = db.execute(
+        "SELECT date, amount, price, source, "
+        "COALESCE(ex_date, date(date, '-3 days')) as ex_date "
+        "FROM dividends WHERE code=? ORDER BY date ASC",
+        [code]
+    ).fetchall()
 
-    # Build sorted dividend timeline (oldest-first)
-    div_timeline = []
-    for d in divs:
-        if d['per_share'] > 0:
-            div_timeline.append({
-                'date': d['date'],
-                'per_share': d['per_share'],
-                'amount': d['amount']
-            })
-    div_timeline.sort(key=lambda x: x['date'])
+    raw_events = []
+    for r in div_rows:
+        source = r['source'] if r['source'] else 'statement'
+        amount = float(r['amount']) if r['amount'] else 0.0
+        price = float(r['price']) if r['price'] else None
+        ex_date = r['ex_date'] if r['ex_date'] else r['date']
+
+        # Unified per_share calculation — same as calc_dividend_yield() in refresh_quotes.py
+        ps = _get_dividend_per_share(code, r['date'], amount, price, source)
+        if ps <= 0:
+            continue
+        raw_events.append({
+            'date': r['date'],
+            'ex_date': ex_date,
+            'per_share': ps,
+            'amount': amount,
+            'source': source,
+        })
+
+    # Deduplicate by ex_date window (5 days) — same as calc_dividend_yield()
+    div_timeline = _deduplicate_dividend_events(raw_events, ttm_mode=True)
+    div_timeline.sort(key=lambda x: x['ex_date'])
 
     # If no dividend records, estimate from ex-dividend price gaps in K-line
+    is_estimated = False
     if not div_timeline:
         estimated = _estimate_dividends_from_kline(code)
         if estimated:
-            div_timeline = estimated
+            div_timeline = [{
+                'date': e['date'], 'ex_date': e['date'],
+                'per_share': e['per_share'], 'amount': e['amount'],
+                'source': 'ttm_calculated',
+            } for e in estimated]
 
-    # Compute dy for each trading day (same formula as calc_dividend_yield)
+    # Compute dy for each trading day
     if not div_timeline:
         dy_series = [None] * len(labels)
     else:
@@ -744,21 +1142,26 @@ def get_dividend_yield_series(code: str) -> dict:
                 dy_series.append(None)
                 continue
 
-            # TTM window: date - 365 days (matching timedelta(days=365))
             try:
                 dt = datetime.strptime(date_str, '%Y-%m-%d')
-                cutoff = dt - timedelta(days=365)
-                cutoff_str = cutoff.strftime('%Y-%m-%d')
             except (ValueError, TypeError):
                 dy_series.append(None)
                 continue
 
-            # Sum per_share dividends within the TTM window
+            # FIXED: TTM window always anchored at current day (rolling window)
+            # Previously used latest_ex as anchor which caused DY to freeze
+            # after the most recent ex-date. Now each day has its own 365-day
+            # lookback, producing a truly rolling TTM series.
+            cutoff = dt - timedelta(days=365)
+            cutoff_str = cutoff.strftime('%Y-%m-%d')
+
+            # Sum per_share dividends within TTM window (using ex_date)
             ttm_sum = 0.0
             for div in div_timeline:
-                if div['date'] > date_str:
+                div_ex = div.get('ex_date', div['date'])
+                if div_ex > date_str:
                     break
-                if div['date'] >= cutoff_str:
+                if div_ex >= cutoff_str:
                     ttm_sum += div['per_share']
 
             if ttm_sum > 0:
@@ -767,15 +1170,17 @@ def get_dividend_yield_series(code: str) -> dict:
             else:
                 dy_series.append(None)
 
-    # Build dividend events list from div_timeline (includes estimated)
+    # Build dividend events list with source field
     dividend_events = [
-        {'date': d['date'], 'per_share': d['per_share'], 'amount': d['amount']}
+        {
+            'date': d['date'],
+            'ex_date': d.get('ex_date', d['date']),
+            'per_share': d['per_share'],
+            'amount': d['amount'],
+            'source': d.get('source', 'statement'),
+        }
         for d in div_timeline
     ]
-
-    # Determine if dividends are estimated (from K-line gaps) vs real records
-    real_divs = [d for d in divs if d['per_share'] > 0]
-    is_estimated = not real_divs and bool(div_timeline)
 
     db.close()
     return {
@@ -783,5 +1188,6 @@ def get_dividend_yield_series(code: str) -> dict:
         "dy_series": dy_series,
         "close_prices": closes,
         "dividend_events": dividend_events,
-        "estimated": is_estimated
+        "estimated": is_estimated,
+        "source": "ttm_calculated",
     }

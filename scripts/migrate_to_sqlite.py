@@ -1,5 +1,6 @@
 """Step 1: Create SQLite DB + migrate all existing JSON data"""
 import sqlite3, json, os
+from datetime import datetime, timedelta
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB = os.path.join(ROOT, 'data', 'stock.db')
@@ -53,8 +54,9 @@ CREATE INDEX idx_trades_date ON trades(date);
 CREATE TABLE positions (code TEXT PRIMARY KEY, name TEXT, qty INTEGER, total_cost REAL, avg_cost REAL, realized_pnl REAL);
 CREATE TABLE closed_positions (code TEXT PRIMARY KEY, name TEXT, realized_pnl REAL, dividends_total REAL, total_commission REAL, total_stamp_tax REAL, total_other_fees REAL);
 
-CREATE TABLE dividends (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT, date TEXT, amount REAL, price REAL);
+CREATE TABLE dividends (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT, date TEXT, amount REAL, price REAL, ex_date TEXT, source TEXT DEFAULT 'statement');
 CREATE INDEX idx_div_code ON dividends(code);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_div_unique ON dividends(code, date, amount);
 
 CREATE TABLE news (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT, code TEXT, title TEXT, summary TEXT, source TEXT, sentiment TEXT, major INTEGER DEFAULT 0);
 CREATE INDEX idx_news_date ON news(date);
@@ -146,7 +148,10 @@ for code, p in sd.get('current_positions', {}).items():
     db.execute("INSERT INTO positions(code,name,qty,total_cost,avg_cost,realized_pnl) VALUES(?,?,?,?,?,?)",
         [code, p['name'], p['qty'], p['total_cost'], p['avg_cost'], p.get('realized_pnl',0)])
     for d in p.get('dividends', []):
-        db.execute("INSERT INTO dividends(code,date,amount,price) VALUES(?,?,?,?)", [code, d['date'], d['amount'], d['price']])
+        pay_date = d['date']
+        ex_date = (datetime.strptime(pay_date[:10], '%Y-%m-%d') - timedelta(days=3)).strftime('%Y-%m-%d')
+        db.execute("INSERT OR REPLACE INTO dividends(code,date,amount,price,ex_date,source) VALUES(?,?,?,?,?,?)",
+            [code, pay_date, d['amount'], d['price'], ex_date, 'statement'])
 for code, p in sd.get('closed_positions', {}).items():
     db.execute("INSERT INTO closed_positions(code,name,realized_pnl,dividends_total,total_commission,total_stamp_tax,total_other_fees) VALUES(?,?,?,?,?,?,?)",
         [code, p['name'], p.get('realized_pnl',0), p.get('dividends_total',0), p.get('total_commission',0), p.get('total_stamp_tax',0), p.get('total_other_fees',0)])

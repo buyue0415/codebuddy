@@ -672,7 +672,12 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
             code = q.get("code", [""])[0] or None
             try:
                 data = get_dividends(code) if DB_AVAILABLE else []
-                json_response(self, {"success": True, "data": data, "count": len(data)})
+                json_response(self, {
+                    "success": True,
+                    "data": data,
+                    "count": len(data),
+                    "source_note": "对账单实际到账数据 — date=派息日, amount=到账金额, per_share=公式计算值(到账金额÷持仓股数)"
+                })
             except Exception as e:
                 json_response(self, {"success": False, "error": str(e)}, 500)
 
@@ -680,7 +685,12 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
             code = path.split("/api/v2/dividends/")[1]
             try:
                 data = get_dividends(code) if DB_AVAILABLE else []
-                json_response(self, {"success": True, "data": data, "count": len(data)})
+                json_response(self, {
+                    "success": True,
+                    "data": data,
+                    "count": len(data),
+                    "source_note": "对账单实际到账数据 — date=派息日, amount=到账金额, per_share=公式计算值(到账金额÷持仓股数)"
+                })
             except Exception as e:
                 json_response(self, {"success": False, "error": str(e)}, 500)
 
@@ -693,7 +703,20 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
                 try:
                     data = get_dividend_yield_series(code) if DB_AVAILABLE else {}
                     has_data = bool(data.get("labels"))
-                    json_response(self, {"success": True, "data": data, "has_data": has_data})
+                    # Extract latest valid DY for cross-verification with quotes.dy
+                    dy_series = data.get("dy_series", [])
+                    latest_dy = None
+                    for v in reversed(dy_series):
+                        if v is not None:
+                            latest_dy = v
+                            break
+                    json_response(self, {
+                        "success": True,
+                        "data": data,
+                        "has_data": has_data,
+                        "latest_dy": latest_dy,
+                        "source_note": "公式计算值（TTM滚动推算）— 基于最近12个月分红与股价推算，与公司实际公布股息率可能存在差异"
+                    })
                 except Exception as e:
                     json_response(self, {"success": False, "error": str(e)}, 500)
 

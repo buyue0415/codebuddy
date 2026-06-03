@@ -54,7 +54,7 @@ document.getElementById('intel-price-content').innerHTML=
  '<div>现价: <b style="color:'+(q?.change>=0?'#dc2626':'#16a34a')+'">'+fmt(currentPrice)+'</b></div>'+
  '<div>加仓 &le; <span class="down">'+fmt(currentPrice*0.95)+'</span></div>'+
  '<div>减仓 &ge; <span class="up">'+fmt(currentPrice*1.10)+'</span></div>'+
- '<div>股息率 <span class="up">'+fmt(dy)+'%</span></div></div>';
+ '<div>股息率 <span class="up">'+fmt(dy)+'%</span><sup style="font-size:10px;color:#f59e0b" title="公式计算值（TTM推算）&#10;基于最近12个月分红与当前股价推算">TTM</sup></div></div>';
 
 // Chart - only render the visible tab
 document.getElementById('intel-chart-title').textContent=name+' 走势图';
@@ -121,7 +121,7 @@ var curMonthSea=sea[nowMonth-1]||0;
 var adviceH='';
 if(ndDir==='bearish'&&curMonthSea<0){adviceH='<b style="color:#dc2626">短期看跌</b> + 当前月季节性偏弱('+fmt(curMonthSea)+'%) &rarr; <b>等待下月加仓窗口</b>';}
 else if(ndDir==='bullish'){adviceH='<b style="color:#16a34a">短期看涨</b> &rarr; <b>耐心持有，选择最佳月份高位兑现</b>';}
-else{adviceH='<b style="color:#f59e0b">信号中性</b> &rarr; 股息率'+fmt(dy)+'%提供安全垫，<b>持有收息为主</b>';}
+else{adviceH='<b style="color:#f59e0b">信号中性</b> &rarr; 股息率'+fmt(dy)+'%(TTM推算)提供安全垫，<b>持有收息为主</b>';}
 document.getElementById('intel-advice').innerHTML='<p>'+adviceH+'</p><p style="font-size:12px;color:#6b7280;margin-top:4px">高股息策略：稳拿分红 | 每日15:35自动更新</p>';
 
 // Signal detail + learning statistics

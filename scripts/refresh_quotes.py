@@ -50,22 +50,28 @@ def fetch_latest_kline(market_code: str, limit: int = 3) -> list:
 
 
 def calc_dividend_yield(code: str, current_price: float) -> float:
-    """Calculate trailing 12-month dividend yield.
+    """Calculate trailing 12-month dividend yield (公式计算值 · TTM推算).
 
-    Formula: (sum of per_share dividends in last 12 months / current_price) * 100
+    TTM formula: (sum of per_share dividends in last 12 months / current_price) * 100
 
-    per_share = dividend.amount / shares_held_before_dividend_date
+    Source-aware per_share calculation:
+      - 'statement': per_share = amount / shares_held_before_record_date
+      - 'web': price field stores actual per-share dividend, use directly
+      - 'ttm_calculated' / 'kline_estimated': price field stores per_share
+      - Estimated (K-line gaps): amount IS per_share directly
 
-    IMPORTANT: The dividends table's `price` column stores the stock market
-    price on the ex-dividend date, NOT the per-share dividend amount.
-    We MUST use `amount / shares` to compute the actual per-share dividend.
+    Deduplication: Entries with ex_date within 5 days are treated as the same
+    dividend event. Statement source preferred over web over estimated.
 
-    Boundary conditions & validation:
+    TTM window: Rolling 365-day lookback from TODAY (current date).
+    Uses ex_date (除权日) for window filtering to align with price adjustments.
+    This ensures DY updates daily as the lookback window advances, rather than
+    freezing after the most recent ex-date.
+
+    Validation:
+      - Per-share cap: 0.01 ~ 5.0 元 (sanity range for A-shares)
+      - Total TTM per_share cap: 10.0 元 (prevents extreme anomalies)
       - current_price <= 0 → return 0.0
-      - No dividends recorded → return 0.0
-      - dividend amount <= 0 → skip (data error / corrupted entry)
-      - shares held <= 0 at dividend date → skip (can't compute per_share)
-      - TTM window: today - 365 days (not latest dividend date as anchor)
       - Returns percentage value (e.g. 5.2 means 5.2%)
     """
     if not current_price or current_price <= 0:
@@ -74,86 +80,89 @@ def calc_dividend_yield(code: str, current_price: float) -> float:
     db = sqlite3.connect(DB_PATH, timeout=10)
     db.row_factory = sqlite3.Row
 
-    # Get all dividends for this stock, newest first
+    # Query with price and source — CRITICAL for correct per_share by source type
     div_rows = db.execute(
-        "SELECT date, amount FROM dividends WHERE code=? ORDER BY date DESC",
+        "SELECT date, amount, price, source, "
+        "COALESCE(ex_date, date(date, '-3 days')) as ex_date "
+        "FROM dividends WHERE code=? ORDER BY date DESC",
         [code]
     ).fetchall()
 
-    # Fallback: estimate from K-line ex-dividend gaps if no real records
-    is_estimated = False
-    if not div_rows:
+    # Step 1: Build normalized dividend events with correct per_share
+    from db_helper import _get_dividend_per_share, _deduplicate_dividend_events
+
+    events = []
+    for r in div_rows:
+        source = r['source'] if r['source'] else 'statement'
+        amount = float(r['amount']) if r['amount'] else 0.0
+        price = float(r['price']) if r['price'] else None
+        ex_date = r['ex_date'] if r['ex_date'] else r['date']
+
+        ps = _get_dividend_per_share(code, r['date'], amount, price, source)
+        if ps <= 0:
+            continue
+        events.append({
+            'date': r['date'],
+            'ex_date': ex_date,
+            'per_share': ps,
+            'source': source,
+            'amount': amount,
+        })
+
+    # Step 2: Fallback to K-line estimation if no recorded dividends
+    if not events:
         try:
             from db_helper import _estimate_dividends_from_kline
             estimated = _estimate_dividends_from_kline(code)
             if estimated:
-                # amount IS the per_share value (already per-share, not total)
-                div_rows = [{'date': e['date'], 'amount': e['per_share'],
-                           '_estimated': True} for e in estimated]
-                is_estimated = True
+                events = [{
+                    'date': e['date'],
+                    'ex_date': e['date'],
+                    'per_share': e['per_share'],
+                    'source': 'ttm_calculated',
+                    'amount': e['per_share'],
+                } for e in estimated]
         except ImportError:
             pass
 
-    if not div_rows:
+    if not events:
         db.close()
         return 0.0
 
-    # TTM window anchors on TODAY (not latest dividend date)
+    # Step 3: Deduplicate — same dividend event from multiple sources
+    # TTM mode: prefer web data for accurate per_share (not affected by
+    # record_date estimation errors in statement-based computation)
+    events = _deduplicate_dividend_events(events, ttm_mode=True)
+
+    # Step 4: TTM window filter — anchored at TODAY (rolling window)
+    # FIXED: Previously anchored at latest_ex which caused DY to freeze
+    # after the most recent ex-date. Now uses rolling 365-day lookback from
+    # today, so the window advances every day.
     today = datetime.now()
     cutoff = today - timedelta(days=365)
 
+    # Step 5: Sum per_share for events within TTM window
     total_per_share = 0.0
-
-    for r in div_rows:
-        # Parse dividend date
+    for e in events:
         try:
-            div_date_str = r['date']
-            if len(div_date_str) > 10:
-                div_date_str = div_date_str[:10]
-            div_date = datetime.strptime(div_date_str, '%Y-%m-%d')
-        except (ValueError, IndexError, TypeError):
-            continue
-
-        # Only count dividends within the trailing 12-month window
-        if div_date < cutoff:
-            continue
-
-        # Validate dividend amount
-        try:
-            amount = float(r['amount'])
+            ex_dt = datetime.strptime(e['ex_date'][:10], '%Y-%m-%d')
         except (ValueError, TypeError):
             continue
-        if amount <= 0:
-            continue  # Skip zero/negative (data corruption)
-
-        # For estimated dividends (from K-line gaps), amount IS per_share
-        if r.get('_estimated'):
-            total_per_share += amount
-        else:
-            # Calculate shares held at RECORD DATE (股权登记日), NOT payment date.
-            record_date_str = (div_date - timedelta(days=2)).strftime('%Y-%m-%d')
-            buys = db.execute(
-                "SELECT COALESCE(SUM(qty), 0) FROM trades "
-                "WHERE code=? AND date<? AND type='证券买入'",
-                [code, record_date_str]
-            ).fetchone()[0]
-            sells = db.execute(
-                "SELECT COALESCE(SUM(ABS(qty)), 0) FROM trades "
-                "WHERE code=? AND date<? AND type='证券卖出'",
-                [code, record_date_str]
-            ).fetchone()[0]
-            shares = int(buys - sells)
-
-            if shares <= 0:
-                continue  # No shares held → can't compute per_share
-
-            per_share = amount / shares
-            total_per_share += per_share
+        if ex_dt >= cutoff:
+            total_per_share += e['per_share']
 
     db.close()
 
+    # Step 6: Final validation
     if total_per_share <= 0:
         return 0.0
+
+    # Hard cap: TTM per_share > 10 is unrealistic (even 10 means ~50% DY)
+    MAX_TTM_PER_SHARE = 10.0
+    if total_per_share > MAX_TTM_PER_SHARE:
+        print(f"  [WARN] {code}: TTM per_share={total_per_share:.2f} exceeds cap "
+              f"{MAX_TTM_PER_SHARE}, capping", file=sys.stderr)
+        total_per_share = MAX_TTM_PER_SHARE
 
     # Return as percentage (e.g. 5.23 means 5.23%)
     return round(total_per_share / current_price * 100, 2)

@@ -10,8 +10,9 @@ V0.6 optimizations:
   - kline data normalized to newest-first order
   - Learning params loaded from DB (preserves self-learning progress)
 
-Execution flow (7 steps, SQLite-only, no legacy JSON):
-  Step 1: Fetch news          Step 2: Parallel K-line fetch
+Execution flow (8 steps, SQLite-only, no legacy JSON):
+  Step 1: Fetch news          Step 1.5: Fetch dividends (web)
+  Step 2: Parallel K-line fetch
   Step 3: Backfill predictions Step 4: Recalculate accuracy
   Step 5: Self-learning (MWU) Step 6: Generate predictions
   Step 7: Seasonal + monthly + quotes
@@ -320,6 +321,26 @@ def main():
             print(f"  Saved {len(deduped)} unique news items (filtered from {len(all_news)})")
     except Exception as e:
         print(f"  News fetch skipped: {e}")
+
+    # Step 1.5: Fetch dividend history from web (before K-line, so calc_dividend_yield has data)
+    print("\n[Step 1.5] Fetching dividend history from web ...")
+    try:
+        from fetch_dividends import fetch_all as fetch_dividends_all
+        div_summary = fetch_dividends_all()
+        print(f"  Dividend fetch complete: {div_summary['total']} records from {len(div_summary['stocks'])} stocks")
+    except Exception as e:
+        print(f"  Dividend fetch skipped: {e}")
+
+    # Step 1.6: Sync dividend income from trades to dividends table
+    # This captures 股息入账 records (e.g., 长江电力 600900) that exist in
+    # the trades table but weren't imported into the dividends table
+    print("\n[Step 1.6] Syncing dividend income from trades ...")
+    try:
+        from db_helper import sync_dividends_from_trades
+        synced = sync_dividends_from_trades()
+        print(f"  Dividend sync from trades: {synced} records synced")
+    except Exception as e:
+        print(f"  Dividend sync from trades skipped: {e}")
 
     # Step 2: Parallel K-line fetch
     print("\n[Step 2] Fetching daily K-line in parallel ...")
