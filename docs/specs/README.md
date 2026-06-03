@@ -1,6 +1,6 @@
 # 股票投资管理系统 — 模块化功能规范
 
-> **系统版本**: V0.7 | **文档版本**: v2.1 | **更新日期**: 2026-06-03 | **定位**: 本地银行股投资管理单页应用
+> **系统版本**: V0.7 | **文档版本**: v2.2 | **更新日期**: 2026-06-04 | **定位**: 本地银行股投资管理单页应用
 
 ---
 
@@ -12,7 +12,8 @@
 ### 技术栈
 | 层 | 技术 |
 |----|------|
-| 前端 | 单页 HTML + Chart.js + fetch API |
+| 前端 (V2) | Vue 3 + Pinia + Vue Router + Chart.js (Vite) |
+| 前端 (旧版) | 单页 HTML + Chart.js + fetch API (保留兼容) |
 | 后端 | Python 3.13+ `http.server` (ThreadedHTTPServer) |
 | 数据库 | SQLite 3 (WAL模式, 17张表) |
 | 外部数据 | NeoData (westock-data Node.js 插件), 广发证券对账单 Excel |
@@ -39,8 +40,6 @@ http://localhost:8765
 ---
 
 ## 文档导航
-
-### 核心模块
 
 ### 核心模块
 
@@ -112,5 +111,6 @@ http://localhost:8765
 
 | 日期 | 版本 | 变更 |
 |------|------|------|
-| 2026-06-03 | v2.1 | V0.7更新：新增13-ml-prediction-optimization spec；README版本号更新；新增6条数据流；归档known issues |
+| 2026-06-04 | v2.2 | 前端 Vue 3 迁移完成：8页面全部迁移，新增 rules 规范体系，测试扩至100+ |
+| 2026-06-03 | v2.1 | V0.7更新：新增13-ml-prediction-optimization spec；README版本号更新；新增6条数据流 |
 | 2026-05-26 | v2.0 | 从单文件拆分重构为 19 个子文档 |
