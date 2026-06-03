@@ -1,6 +1,6 @@
 # 模块1: Web API 服务层
 
-> **核心文件**: `server.py` | **前端**: `deliverables/bank-stock-system.html`, `kline-chart.js` | **端口**: 8765 | **基类**: `ThreadedHTTPServer`
+> **核心文件**: `server.py` | **前端**: `deliverables/bank-stock-system.html`, `deliverables/js/*.js` | **端口**: 8765 | **基类**: `ThreadedHTTPServer` | **版本**: V0.7
 
 ---
 
@@ -16,19 +16,19 @@
 - 绑定 `127.0.0.1:8765`
 - 使用 `ThreadedHTTPServer`（`ThreadingMixIn` + `HTTPServer`），支持多请求并发
 - 守护线程模式 (`daemon_threads = True`)，主线程退出时自动回收
-- Python运行时路径硬编码: `C:\Users\28312\.workbuddy\binaries\python\versions\3.14.3\python.exe`
+- Python运行时路径通过动态检测或环境变量获取（V0.7改进）
 
 ### 2.2 请求路由
 根据 URL path 和 HTTP method 分发：
 
 | Method | 功能 |
 |--------|------|
-| **GET** | 数据查询 (41个端点)、静态文件服务 (`/deliverables/*`, `/data/*`)、DB查看器 (`/dbview`) |
+| **GET** | 数据查询 (40个端点)、静态文件服务 (`/deliverables/*`, `/data/*`)、DB查看器 (`/dbview`) |
 | **POST** | 自选股增删 (`/api/v2/watchlist`, `/api/watchlist/add`)、触发器执行 (`/api/trigger/*`)、对账单上传 (`/api/upload/statement`)、专家报告导入 (`/api/v2/expert/import`) |
 | **DELETE** | 自选股移除及级联数据清理 (`/api/v2/watchlist/{code}`) |
 | **OPTIONS** | CORS 预检，允许跨域请求 |
 
-> ⚠️ **路由顺序敏感**: 精准匹配路径（如 `/api/v2/kline/daily`）必须在模糊匹配路径（如 `startswith("/api/v2/kline/daily")`）之前，见 `server.py:258-293`。
+> ⚠️ **路由顺序敏感**: 精准匹配路径（如 `/api/v2/kline/daily`）必须在模糊匹配路径（如 `startswith("/api/v2/kline/daily")`）之前。静态文件路由有Python文件访问保护（403）。
 
 ### 2.3 脚本编排
 通过 `subprocess.run()` 调用 Python 子进程执行后台脚本：

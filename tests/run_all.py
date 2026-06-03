@@ -5,19 +5,23 @@ Usage:
     python tests/run_all.py                    # Run all unit tests
     python tests/run_all.py --integration      # Run unit + API integration tests
     python tests/run_all.py --module=db        # Run specific module only
+    python tests/run_all.py --list             # List all modules
 
 Modules:
-    db       - Database CRUD layer (P1 CRITICAL)
-    sync     - Sync engine / signals (P1 CRITICAL)
-    news     - News fetcher (P1 CRITICAL)
-    stmt     - Statement parser (P2 HIGH)
-    api      - API server routing & format (P1 CRITICAL)
-    dal      - DB schema & integrity (P1 CRITICAL)
-    learn    - Self-learning params structure (P2 HIGH)
-    update   - Daily sync pipeline (P2 HIGH)
-    sched    - Scheduler & automation (P2 HIGH)
-    stkdb    - Stock code & watchlist (P2 HIGH)
-    api_it   - API integration (P2 HIGH) — requires server running
+    db         - Database CRUD layer (P1 CRITICAL)
+    sync       - Sync engine / signals (P1 CRITICAL)
+    news       - News fetcher (P1 CRITICAL)
+    api        - API server routing & format (P1 CRITICAL)
+    dal        - DB schema & integrity (P1 CRITICAL)
+    integrity  - Cross-table data integrity (P1 CRITICAL)
+    stmt       - Statement parser (P2 HIGH)
+    learn      - Self-learning params structure (P2 HIGH)
+    update     - Daily sync pipeline (P2 HIGH)
+    sched      - Scheduler & automation (P2 HIGH)
+    stkdb      - Stock code & watchlist (P2 HIGH)
+    optimize   - ML prediction optimization (P2 HIGH)
+    compat     - Expert report compatibility (P2 HIGH)
+    api_it     - API integration (P2 HIGH) — requires server running
 """
 import os, sys, argparse, time, unittest
 
@@ -32,16 +36,19 @@ from conftest import print_header
 # ======================================================================
 
 MODULES = {
-    'db':      {'path': 'tests.test_db_helper',       'priority': 'P1 CRITICAL', 'desc': 'Database CRUD layer'},
-    'sync':    {'path': 'tests.test_sync_engine',      'priority': 'P1 CRITICAL', 'desc': 'Signals / predictions / EMA'},
-    'news':    {'path': 'tests.test_news_fetcher',     'priority': 'P1 CRITICAL', 'desc': 'News parsing / sentiment'},
-    'stmt':    {'path': 'tests.test_statement_parser', 'priority': 'P2 HIGH',     'desc': 'Position calculation logic'},
-    'api':     {'path': 'tests.test_api_server',       'priority': 'P1 CRITICAL', 'desc': 'API server routing & format'},
-    'dal':     {'path': 'tests.test_database_layer',   'priority': 'P1 CRITICAL', 'desc': 'DB schema & integrity'},
-    'learn':   {'path': 'tests.test_self_learning',    'priority': 'P2 HIGH',     'desc': 'Self-learning params structure'},
-    'update':  {'path': 'tests.test_daily_update',     'priority': 'P2 HIGH',     'desc': 'Daily sync pipeline'},
-    'sched':   {'path': 'tests.test_scheduler',        'priority': 'P2 HIGH',     'desc': 'Scheduler & automation'},
-    'stkdb':   {'path': 'tests.test_stock_database',   'priority': 'P2 HIGH',     'desc': 'Stock code & watchlist'},
+    'db':      {'path': 'tests.test_db_helper',           'priority': 'P1 CRITICAL', 'desc': 'Database CRUD layer'},
+    'sync':    {'path': 'tests.test_sync_engine',          'priority': 'P1 CRITICAL', 'desc': 'Signals / predictions / EMA'},
+    'news':    {'path': 'tests.test_news_fetcher',         'priority': 'P1 CRITICAL', 'desc': 'News parsing / sentiment'},
+    'api':     {'path': 'tests.test_api_server',           'priority': 'P1 CRITICAL', 'desc': 'API server routing & format'},
+    'dal':     {'path': 'tests.test_database_layer',       'priority': 'P1 CRITICAL', 'desc': 'DB schema & integrity'},
+    'integrity': {'path': 'tests.test_data_integrity',     'priority': 'P1 CRITICAL', 'desc': 'Cross-table data integrity'},
+    'stmt':    {'path': 'tests.test_statement_parser',     'priority': 'P2 HIGH',     'desc': 'Position calculation logic'},
+    'learn':   {'path': 'tests.test_self_learning',        'priority': 'P2 HIGH',     'desc': 'Self-learning params structure'},
+    'update':  {'path': 'tests.test_daily_update',         'priority': 'P2 HIGH',     'desc': 'Daily sync pipeline'},
+    'sched':   {'path': 'tests.test_scheduler',            'priority': 'P2 HIGH',     'desc': 'Scheduler & automation'},
+    'stkdb':   {'path': 'tests.test_stock_database',       'priority': 'P2 HIGH',     'desc': 'Stock code & watchlist'},
+    'optimize': {'path': 'tests.test_optimize_predict',    'priority': 'P2 HIGH',     'desc': 'ML prediction optimization'},
+    'compat':  {'path': 'tests.test_report_compatibility', 'priority': 'P2 HIGH',     'desc': 'Expert report compatibility'},
 }
 
 
@@ -117,8 +124,8 @@ def main():
         total_tests += result.testsRun
     else:
         # Run all unit test modules (P1 first, then P2)
-        for priority_name, modules in [('P1 CRITICAL', ['db', 'sync', 'news']),
-                                        ('P2 HIGH', ['stmt'])]:
+        for priority_name, modules in [('P1 CRITICAL', ['db', 'sync', 'news', 'api', 'dal', 'integrity']),
+                                        ('P2 HIGH', ['stmt', 'learn', 'update', 'sched', 'stkdb', 'optimize', 'compat'])]:
             print_header(f"Priority: {priority_name}")
             for mod in modules:
                 print(f"  >>> Running {mod} ({MODULES[mod]['desc']})...\n")

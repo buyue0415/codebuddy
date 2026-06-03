@@ -1,6 +1,6 @@
 # 股票投资管理系统 — 模块化功能规范
 
-> **系统版本**: V0.6 | **文档版本**: v2.0 | **生成日期**: 2026-05-26 | **定位**: 本地银行股投资管理单页应用
+> **系统版本**: V0.7 | **文档版本**: v2.1 | **更新日期**: 2026-06-03 | **定位**: 本地银行股投资管理单页应用
 
 ---
 
@@ -42,6 +42,8 @@ http://localhost:8765
 
 ### 核心模块
 
+### 核心模块
+
 | 序号 | 文档 | 对应模块 | 核心文件 |
 |------|------|---------|---------|
 | 01 | [Web API 服务层](./01-api-server.md) | 模块1 | `server.py` |
@@ -61,13 +63,19 @@ http://localhost:8765
 | 10 | [专家报告导入](./10-expert-report.md) | 模块13 | `scripts/import_expert_report.py` |
 | 11 | [数据注入](./11-data-injection.md) | 模块14 | `scripts/reinject_from_db.py` |
 
+### 预测增强 (V0.7 新增)
+
+| 序号 | 文档 | 对应模块 | 核心文件 |
+|------|------|---------|---------|
+| 13 | [ML增强预测优化](./13-ml-prediction-optimization.md) | 模块17 | `scripts/optimize_predict.py` |
+
 ### 运维与附录
 
 | 序号 | 文档 | 说明 |
 |------|------|------|
 | 12 | [数据迁移与系统审计](./12-migration-and-audit.md) | 模块15/16 |
 | A | [数据库Schema](./appendix-a-schema.md) | 17张表完整定义 |
-| B | [API端点清单](./appendix-b-api.md) | 42个端点详细说明 |
+| B | [API端点清单](./appendix-b-api.md) | 40个端点详细说明 |
 | C | [系统配置项](./appendix-c-config.md) | 配置文件和运行时常量 |
 | D | [依赖关系图与数据流](./appendix-d-dependencies.md) | ASCII架构图 + 依赖矩阵 |
 | E | [术语表](./appendix-e-glossary.md) | 25个统一术语定义 |
@@ -78,10 +86,12 @@ http://localhost:8765
 ## 关键数据流
 
 ```
-1. 行情+预测: NeoData → sync_all.py → SQLite → API → 前端
-2. 持仓数据:   广发对账单.xlsx → update_from_statement.py → SQLite/JSON → API → 前端
-3. 新闻数据:   NeoData → fetch_news.py → SQLite → API → 前端
-4. 专家报告:   WorkBuddy多Agent → POST /api/v2/expert/import → SQLite → API → 前端
+1. 行情+预测: NeoData → sync_all.py (8步) → SQLite → API → 前端
+2. ML增强预测:  K线数据 → optimize_predict.py (30+特征+RandomForest+Isotonic校准) → SQLite
+3. 持仓数据:   广发对账单.xlsx → update_from_statement.py → SQLite/JSON → API → 前端
+4. 新闻数据:   NeoData → fetch_news.py → SQLite → API → 前端
+5. 专家报告:   WorkBuddy多Agent → POST /api/v2/expert/import → SQLite → API → 前端
+6. 分红数据:   东方财富API → fetch_dividends.py → SQLite
 ```
 
 ---
@@ -97,3 +107,10 @@ http://localhost:8765
 ---
 
 > **维护说明**: 系统代码变更时需同步更新对应子文档。各模块文档的"关联文件"字段指向实际代码文件。
+
+## 更新历史
+
+| 日期 | 版本 | 变更 |
+|------|------|------|
+| 2026-06-03 | v2.1 | V0.7更新：新增13-ml-prediction-optimization spec；README版本号更新；新增6条数据流；归档known issues |
+| 2026-05-26 | v2.0 | 从单文件拆分重构为 19 个子文档 |
