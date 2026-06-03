@@ -245,7 +245,8 @@ try:
         get_quotes, get_positions, get_daily_predictions, get_learning_params,
         get_accuracy_stats, get_news, get_expert_reports, get_seasonal,
         get_config, _calc_fees, get_current_positions, get_closed_positions,
-        get_trades, get_dividends, get_all_kline_daily, get_all_kline_monthly,
+        get_trades, get_dividends, get_statement_dividends,
+        get_all_kline_daily, get_all_kline_monthly,
         get_all_predictions, get_all_seasonal, get_all_accuracy_stats,
         get_all_monthly_changes, get_all_learning_params,
         get_dividend_yield_series)
@@ -273,51 +274,26 @@ def write_json(path, data):
     with open(os.path.join(ROOT, path), "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-# --- Stock Search ---
-_stock_cache = None
-
-def _load_stocks():
-    global _stock_cache
-    if _stock_cache is None:
-        try:
-            _stock_cache = read_json("data/a_stocks.json")
-        except:
-            _stock_cache = []
-    return _stock_cache
+# --- Stock Search (V0.7: SQLite-backed, no JSON dependency) ---
 
 def search_stocks(keyword):
-    stocks = _load_stocks()
-    if not stocks or not keyword:
+    """Search stocks from SQLite stocks table. Falls back to JSON on DB error."""
+    try:
+        if DB_AVAILABLE:
+            from db_helper import get_stock_search
+            return get_stock_search(keyword)
+    except Exception:
+        pass  # Fall through to JSON fallback
+    # Legacy fallback (only if DB not available)
+    try:
+        stocks = read_json("data/a_stocks.json")
+        if not stocks or not keyword:
+            return []
+        kw = keyword.lower().strip()
+        return [s for s in stocks if kw in s.get('code','') or kw in s.get('name','').lower()
+                or kw in s.get('py','').lower()][:15]
+    except:
         return []
-    kw = keyword.lower().strip()
-    # Category D: Normalize full-width characters for Chinese name matching
-    kw = kw.replace('\u3000', ' ').replace('\uff41', 'a').replace('\uff42', 'b')
-    results = []
-    for s in stocks:
-        score = 0
-        code = s.get("code", "")
-        name = s.get("name", "")
-        py = s.get("py", "")
-        if code.startswith(kw):
-            score += 100
-        elif code.find(kw) > 0:
-            score += 60
-        if name.find(kw) >= 0:
-            score += 80 - name.find(kw) * 0.5
-        if kw.isalpha() and py.find(kw) >= 0:
-            # Also try partial pinyin matching for multi-character queries
-            if py.startswith(kw):
-                score += 50
-            else:
-                score += 30
-        if score == 0 and len(kw) > 1:
-            match_all = all(ch in py for ch in kw if ch.isalpha())
-            if match_all:
-                score += 10
-        if score > 0:
-            results.append({"code": code, "name": name, "market": s.get("market", "sh"), "py": py, "score": score})
-    results.sort(key=lambda x: -x["score"])
-    return results[:15]
 
 
 # Refresh status tracking — prevents concurrent runs
@@ -361,7 +337,15 @@ def _build_init_data() -> dict:
     if _init_cache and (now - _init_cache_time) < CACHE_TTL:
         return _init_cache
 
-    init_data = {"account": "51312640", "broker": "广发证券", "generated": datetime.now().strftime("%Y-%m-%d %H:%M")}
+    try:
+        cfg = get_config() if DB_AVAILABLE else {}
+    except:
+        cfg = {}
+    init_data = {
+        "account": cfg.get("account", ""),
+        "broker": cfg.get("broker", ""),
+        "generated": datetime.now().strftime("%Y-%m-%d %H:%M")
+    }
     try:
         init_data["watchlist"] = [dict(r) for r in get_watchlist()] if DB_AVAILABLE else []
     except Exception:
@@ -406,6 +390,13 @@ def _build_init_data() -> dict:
         init_data["seasonal"] = get_all_seasonal() if DB_AVAILABLE else {}
     except Exception:
         init_data["seasonal"] = {}
+    try:
+        if DB_AVAILABLE:
+            mc = get_all_monthly_changes()
+            for code, bars in mc.items():
+                init_data[f"monthly_changes_{code}"] = bars
+    except Exception:
+        pass
     try:
         init_data["learning_params"] = get_all_learning_params() if DB_AVAILABLE else {}
     except Exception:
@@ -583,6 +574,44 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
             except Exception as e:
                 json_response(self, {"success": False, "error": str(e)}, 500)
 
+        # V0.7: System snapshot (replaces data/system_data.json)
+        elif path == "/api/v2/snapshot":
+            try:
+                if DB_AVAILABLE:
+                    data = {
+                        "generated": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+                        "watchlist": get_watchlist() if DB_AVAILABLE else [],
+                        "quotes": get_quotes() if DB_AVAILABLE else {},
+                        "daily_predictions": get_all_predictions() if DB_AVAILABLE else [],
+                        "seasonal": get_all_seasonal() if DB_AVAILABLE else {},
+                    }
+                    json_response(self, {
+                        "success": True, "data": data,
+                        "tables_used": ["watchlist", "quotes", "daily_predictions", "seasonal"],
+                        "source": "sqlite",
+                    })
+                else:
+                    json_response(self, {"success": False, "error": "Database not available"}, 503)
+            except Exception as e:
+                json_response(self, {"success": False, "error": str(e), "code": "SNAPSHOT_FAILED"}, 500)
+
+        # V0.7: Statement import status
+        elif path == "/api/v2/statement/status":
+            try:
+                if DB_AVAILABLE:
+                    db = get_db()
+                    trade_count = db.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+                    pos_count = db.execute("SELECT COUNT(*) FROM positions").fetchone()[0]
+                    db.close()
+                    json_response(self, {
+                        "success": True,
+                        "data": {"current_stocks": pos_count, "total_trades": trade_count, "source": "sqlite"}
+                    })
+                else:
+                    json_response(self, {"success": False, "error": "Database not available"}, 503)
+            except Exception as e:
+                json_response(self, {"success": False, "error": str(e), "code": "STATUS_FAILED"}, 500)
+
         # V0.6: Batch seasonal (exact match, must come BEFORE startswith)
         elif path == "/api/v2/seasonal":
             try:
@@ -670,12 +699,18 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
         elif path == "/api/v2/dividends":
             q = urllib.parse.parse_qs(parsed.query)
             code = q.get("code", [""])[0] or None
+            source_filter = q.get("source", ["statement"])[0]  # 默认仅返回对账单数据
             try:
-                data = get_dividends(code) if DB_AVAILABLE else []
+                if source_filter == 'all':
+                    data = get_dividends(code) if DB_AVAILABLE else []
+                else:
+                    # 默认只返回对账单导入数据（statement），匹配前端"分红收入明细"表格
+                    data = get_statement_dividends(code) if DB_AVAILABLE else []
                 json_response(self, {
                     "success": True,
                     "data": data,
                     "count": len(data),
+                    "source": source_filter,
                     "source_note": "对账单实际到账数据 — date=派息日, amount=到账金额, per_share=公式计算值(到账金额÷持仓股数)"
                 })
             except Exception as e:
@@ -684,7 +719,8 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
         elif path.startswith("/api/v2/dividends/") and len(path) > len("/api/v2/dividends/"):
             code = path.split("/api/v2/dividends/")[1]
             try:
-                data = get_dividends(code) if DB_AVAILABLE else []
+                # 单股票查询也默认只返回对账单数据
+                data = get_statement_dividends(code) if DB_AVAILABLE else []
                 json_response(self, {
                     "success": True,
                     "data": data,
@@ -783,6 +819,12 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
             # Serve static files but block .py execution
             if path.endswith(".py"):
                 json_response(self, {"error": "Forbidden"}, 403)
+            elif path.endswith(".css"):
+                self.serve_file(path.lstrip("/"), "text/css; charset=utf-8")
+            elif path.endswith(".js"):
+                self.serve_file(path.lstrip("/"), "application/javascript; charset=utf-8")
+            elif path.endswith(".html"):
+                self.serve_file(path.lstrip("/"), "text/html; charset=utf-8")
             else:
                 self.serve_file(path.lstrip("/"))
         else:
@@ -1316,13 +1358,30 @@ tr:hover td{background:#2a2a2a}.num{color:#b5cea8}.text{color:#ce9178}.null{colo
         self.end_headers()
         self.wfile.write(data)
 
+    # MIME type mapping for static file serving
+    MIME_TYPES = {
+        ".html": "text/html; charset=utf-8",
+        ".css": "text/css; charset=utf-8",
+        ".js": "application/javascript; charset=utf-8",
+        ".json": "application/json; charset=utf-8",
+        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".gif": "image/gif", ".svg": "image/svg+xml", ".ico": "image/x-icon",
+        ".woff": "font/woff", ".woff2": "font/woff2", ".ttf": "font/ttf",
+        ".pdf": "application/pdf", ".zip": "application/zip",
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".xls": "application/vnd.ms-excel",
+    }
+
     def serve_file(self, path, content_type=None):
         full_path = os.path.join(ROOT, path)
         if not os.path.exists(full_path):
             self.send_response(404)
             self.end_headers()
             return
-        ct = content_type or "application/octet-stream"
+        if content_type is None:
+            _, ext = os.path.splitext(path.lower())
+            content_type = self.MIME_TYPES.get(ext, "application/octet-stream")
+        ct = content_type
         with open(full_path, "rb") as f:
             data = f.read()
         self.send_response(200)

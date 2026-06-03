@@ -10,6 +10,9 @@ def get_db():
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA journal_mode=WAL")
     db.execute("PRAGMA busy_timeout=5000")
+    # Ensure UNIQUE indexes for INSERT OR REPLACE (accumulate mode)
+    db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_kd_code_date_u ON kline_daily(code, date)")
+    db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_km_code_date_u ON kline_monthly(code, date)")
     return db
 
 # ---- Query functions ----
@@ -651,14 +654,22 @@ def get_dividends(code=None):
         ).fetchall()
     result = []
     for r in rows:
-        # sqlite3.Row does not support .get() — must use dict-style access
-        source = r['source'] if r['source'] else 'statement'
+        # 严格来源判定：NULL/空 → 标记为 unknown，不算 statement
+        raw_source = r['source']
+        if raw_source is None or raw_source == '':
+            source = 'unknown'
+        else:
+            source = raw_source
+        
         if source in ('web', 'kline_estimated', 'ttm_calculated'):
             # Web/K线预估来源: price 字段直接存储每股分红（per_share）
             per_share = float(r['price']) if r['price'] else 0.0
-        else:
+        elif source == 'statement':
             # 对账单来源: amount / shares_before_date 计算每股分红
             per_share = _compute_per_share(r['code'], r['date'], r['amount'])
+        else:
+            # unknown 来源：不参与 display，跳过 per_share 计算
+            per_share = 0.0
         result.append({
             'date': r['date'],
             'code': r['code'],
@@ -672,6 +683,16 @@ def get_dividends(code=None):
         })
     db.close()
     return result
+
+
+def get_statement_dividends(code=None):
+    """Return ONLY statement-source dividends (broker import data).
+    
+    用于分红收入明细表格 —— 仅对账单实际到账数据，不包含网络抓取/估算数据。
+    """
+    all_divs = get_dividends(code)
+    return [d for d in all_divs if d['source'] == 'statement']
+
 
 def get_all_kline_daily(codes=None):
     """Batch daily kline: all watchlist stocks or specific codes"""
@@ -775,7 +796,7 @@ def get_all_monthly_changes(codes=None):
         codes = get_watchlist_codes()
     result = {}
     for code in codes:
-        rows = db.execute("SELECT date, change_pct FROM kline_monthly WHERE code=? ORDER BY date DESC", [code]).fetchall()
+        rows = db.execute("SELECT date, change_pct FROM kline_monthly WHERE code=? ORDER BY date ASC", [code]).fetchall()
         result[code] = [[r['date'], r['change_pct']] for r in rows if r['change_pct'] != 0]
     db.close()
     return result
@@ -799,16 +820,16 @@ def get_all_learning_params(codes=None):
 # ===== Write functions (used by sync scripts) =====
 
 def upsert_kline_daily(code, bars):
+    """Accumulate daily kline — INSERT OR REPLACE prevents duplicates by (code, date)."""
     db = get_db()
-    db.execute("DELETE FROM kline_daily WHERE code=?", [code])
-    db.executemany("INSERT INTO kline_daily(code,date,open,close,high,low) VALUES(?,?,?,?,?,?)",
+    db.executemany("INSERT OR REPLACE INTO kline_daily(code,date,open,close,high,low) VALUES(?,?,?,?,?,?)",
         [[code, b[0], b[1], b[2], b[3], b[4]] for b in bars])
     db.commit(); db.close()
 
 def upsert_kline_monthly(code, bars):
+    """Accumulate monthly kline — INSERT OR REPLACE prevents duplicates by (code, date)."""
     db = get_db()
-    db.execute("DELETE FROM kline_monthly WHERE code=?", [code])
-    db.executemany("INSERT INTO kline_monthly(code,date,open,high,low,close,volume,change_pct) VALUES(?,?,?,?,?,?,?,?)",
+    db.executemany("INSERT OR REPLACE INTO kline_monthly(code,date,open,high,low,close,volume,change_pct) VALUES(?,?,?,?,?,?,?,?)",
         [[code, b[0], b[1], b[2], b[3], b[4], b[5] if len(b)>5 else 0, b[6] if len(b)>6 else 0] for b in bars])
     db.commit(); db.close()
 
@@ -892,10 +913,11 @@ def insert_daily_prediction(code, date, prev_close, next_day, hourly, signals):
     return pid
 
 def clear_today_predictions(date):
+    """Clear predictions for future dates only (>date), preserving today's backfilled data."""
     db = get_db()
-    db.execute("DELETE FROM prediction_signals WHERE pred_id IN (SELECT id FROM daily_predictions WHERE date=?)", [date])
-    db.execute("DELETE FROM prediction_hourly WHERE pred_id IN (SELECT id FROM daily_predictions WHERE date=?)", [date])
-    db.execute("DELETE FROM daily_predictions WHERE date=?", [date])
+    db.execute("DELETE FROM prediction_signals WHERE pred_id IN (SELECT id FROM daily_predictions WHERE date>?)", [date])
+    db.execute("DELETE FROM prediction_hourly WHERE pred_id IN (SELECT id FROM daily_predictions WHERE date>?)", [date])
+    db.execute("DELETE FROM daily_predictions WHERE date>?", [date])
     db.commit(); db.close()
 
 def upsert_learning_params(code, lp):
@@ -1148,21 +1170,43 @@ def get_dividend_yield_series(code: str) -> dict:
                 dy_series.append(None)
                 continue
 
-            # FIXED: TTM window always anchored at current day (rolling window)
-            # Previously used latest_ex as anchor which caused DY to freeze
-            # after the most recent ex-date. Now each day has its own 365-day
-            # lookback, producing a truly rolling TTM series.
+            # TTM dividend yield: rolling 365-day window, but avoid double-counting
+            # annual dividends that fall ~365 days apart (e.g., 2023-07-21 and
+            # 2024-07-19, only 364 days apart). Strategy:
+            #   - If max gap between dividends in window > 340 days
+            #     → annual payer → use only the most recent per_share
+            #   - Otherwise (quarterly/semi-annual, gaps < 180 days)
+            #     → sum all per_share values
             cutoff = dt - timedelta(days=365)
             cutoff_str = cutoff.strftime('%Y-%m-%d')
 
-            # Sum per_share dividends within TTM window (using ex_date)
-            ttm_sum = 0.0
+            # Gather qualifying dividends within 365-day window.
+            # Exclude dividend on the EX-DATE itself: the price has already
+            # dropped but the new dividend should not be counted until the
+            # next trading day. This prevents artificial spikes when a new
+            # dividend enters the TTM window.
+            qualifying = []
             for div in div_timeline:
                 div_ex = div.get('ex_date', div['date'])
-                if div_ex > date_str:
-                    break
+                if div_ex >= date_str:
+                    break  # exclude current & future ex-dates
                 if div_ex >= cutoff_str:
-                    ttm_sum += div['per_share']
+                    qualifying.append(div)
+
+            if qualifying:
+                dates = [q.get('ex_date', q['date']) for q in qualifying]
+                dates.sort()
+                span = _date_diff_days(dates[0], dates[-1]) if dates else 0
+
+                if span >= 350:
+                    # Annual payer with overlapping window: only latest dividend
+                    ttm_sum = float(qualifying[-1]['per_share'])
+                else:
+                    # Quarterly/semi-annual payer: sum all dividends in window
+                    ttm_sum = sum(float(q['per_share']) for q in qualifying)
+            else:
+                ttm_sum = 0.0
+
 
             if ttm_sum > 0:
                 dy = round(ttm_sum / close * 100, 2)

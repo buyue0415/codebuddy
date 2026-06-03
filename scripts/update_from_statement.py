@@ -1,6 +1,7 @@
 """从广发证券对账单 xlsx 解析交易记录，写入 SQLite 持仓表。
 
-v2.0 增强：
+v2.1 增强：
+  - 纯Python标准库解析xlsx（无需pandas依赖）
   - 文件存在性 / 格式检查
   - 列名校验与自动适配
   - 逐行验证 + 隔离坏行不中断
@@ -8,16 +9,12 @@ v2.0 增强：
   - 详细错误日志记录
   - 解析前后备份保护
 """
-import json, sys, os, shutil
+import json, sys, os, shutil, io
 from collections import defaultdict
 from datetime import datetime
 from typing import Dict, List, Any, Tuple
-
-try:
-    import pandas as pd
-    PANDAS_OK = True
-except ImportError:
-    PANDAS_OK = False
+import zipfile
+import xml.etree.ElementTree as ET
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -75,71 +72,136 @@ def check_file(path: str) -> bool:
     return True
 
 
-# ── Excel 解析与校验 ──
+# ── Excel 解析与校验 (纯Python标准库，无需pandas) ──
+
+def _parse_xlsx_stdlib(path: str) -> Tuple[List[str], List[List[Any]]]:
+    """使用zipfile+XML解析xlsx，返回(列名列表, 数据行列表)。"""
+    NS = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
+    
+    with zipfile.ZipFile(path, 'r') as z:
+        # 1. 读取共享字符串表
+        sst = []
+        if 'xl/sharedStrings.xml' in z.namelist():
+            root = ET.fromstring(z.read('xl/sharedStrings.xml'))
+            for si in root.findall(f'{NS}si'):
+                text = si.findtext(f'{NS}t', '') or ''
+                for r in si.findall(f'{NS}r'):
+                    t = r.findtext(f'{NS}t', '') or ''
+                    text += t
+                sst.append(text)
+
+        # 2. 读取第一个工作表
+        sheet_xml = z.read('xl/worksheets/sheet1.xml')
+        root = ET.fromstring(sheet_xml)
+
+        rows_data = []
+        for row_elem in root.findall(f'{NS}sheetData/{NS}row'):
+            row_cells = {}
+            for c in row_elem.findall(f'{NS}c'):
+                ref = c.get('r', '')
+                col_letter = ''.join(ch for ch in ref if ch.isalpha())
+                col_idx = 0
+                for ch in col_letter.upper():
+                    col_idx = col_idx * 26 + (ord(ch) - ord('A') + 1)
+                col_idx -= 1
+                
+                cell_type = c.get('t', '')
+                v_elem = c.find(f'{NS}v')
+                if v_elem is None or v_elem.text is None:
+                    row_cells[col_idx] = ''
+                elif cell_type == 's':
+                    idx = int(v_elem.text)
+                    row_cells[col_idx] = sst[idx] if idx < len(sst) else ''
+                else:
+                    row_cells[col_idx] = v_elem.text
+            
+            if row_cells:
+                max_col = max(row_cells.keys())
+                row_list = [row_cells.get(i, '') for i in range(max_col + 1)]
+                rows_data.append(row_list)
+
+    if not rows_data:
+        return [], []
+
+    # 第一行作为列名
+    headers = [str(h).strip() for h in rows_data[0]]
+    data_rows = rows_data[1:]
+    return headers, data_rows
+
 
 def parse_excel(path: str):
-    """解析 Excel，返回 (success, dataframe, warnings)。
-    
-    当 pandas 不可用时，返回 (False, None, errors)。
-    """
+    """解析 Excel，返回 (success, list_of_dicts, warnings)。"""
     warnings: List[str] = []
-    if not PANDAS_OK:
-        return False, None, ["pandas 未安装，无法解析 Excel"]
 
     try:
-        df = pd.read_excel(path, header=0)
+        headers, data_rows = _parse_xlsx_stdlib(path)
     except Exception as e:
         return False, None, [f"Excel 读取失败: {e}"]
 
-    if df.empty:
+    if not headers:
         return False, None, ["Excel 文件为空"]
 
-    # 列名检测和适配（支持中/英文两种格式）
-    actual_cols = [str(c).strip() for c in df.columns]
-    first_col = actual_cols[0] if actual_cols else ""
-    log(f"检测到 {len(actual_cols)} 列，首列: '{first_col}'")
+    first_col = headers[0] if headers else ""
+    log(f"检测到 {len(headers)} 列，首列: '{first_col}', 数据行数: {len(data_rows)}")
 
-    if len(actual_cols) >= len(EXPECTED_COLUMNS_MINIMAL):
+    # 列名检测和适配（支持中/英文两种格式）
+    if len(headers) >= len(EXPECTED_COLUMNS_MINIMAL):
         if first_col == 'date' or first_col in EXPECTED_COLUMNS_V1:
-            # 已是英文列名 → 按位置对齐
-            df.columns = EXPECTED_COLUMNS_V1
+            # 已是英文列名 → 按位置对齐到 EXPECTED_COLUMNS_V1
             log("列名: 英文（按位置对齐）")
         elif first_col in CHINESE_COLUMN_MAP:
             # 中文列名 → 映射转换
-            renamed = {}
+            col_map = {}
             unmatched = []
-            for c in actual_cols:
-                if c in CHINESE_COLUMN_MAP:
-                    renamed[c] = CHINESE_COLUMN_MAP[c]
+            for idx, h in enumerate(headers):
+                if h in CHINESE_COLUMN_MAP:
+                    col_map[idx] = CHINESE_COLUMN_MAP[h]
                 else:
-                    unmatched.append(c)
+                    unmatched.append(h)
             if unmatched:
                 log(f"无法识别的列名: {unmatched}", "WARNING")
-            df = df.rename(columns=renamed)
-            log(f"列名: 中文→English ({len(renamed)}/{len(actual_cols)} 列映射)")
-            # 补全缺失列
-            for col in EXPECTED_COLUMNS_V1:
-                if col not in df.columns:
-                    df[col] = 0
+            # 重写 headers
+            new_headers = [CHINESE_COLUMN_MAP.get(h, h) for h in headers]
+            headers = new_headers
+            log(f"列名: 中文→English (已映射)")
         else:
             return False, None, [
-                f"无法识别列名。首列='{first_col}'，不支持此格式。期望英文(V1)或中文(广发导出)格式"
+                f"无法识别列名。首列='{first_col}'，不支持此格式"
             ]
     else:
         return False, None, [
-            f"列数不足: 期望 >= {len(EXPECTED_COLUMNS_MINIMAL)}，实际 {len(actual_cols)}"
+            f"列数不足: 期望 >= {len(EXPECTED_COLUMNS_MINIMAL)}，实际 {len(headers)}"
         ]
+
+    # 补全缺失列（fill missing columns with empty）
+    for col in EXPECTED_COLUMNS_V1:
+        if col not in headers:
+            # 在末尾追加
+            pass  # 下面会处理
+
+    # 将数据行转换为字典列表
+    rows: List[Dict] = []
+    for row in data_rows:
+        d = {}
+        for i, h in enumerate(headers):
+            if i < len(row):
+                d[h] = row[i]
+            else:
+                d[h] = ''
+        # 补全缺失列
+        for col in EXPECTED_COLUMNS_V1:
+            if col not in d:
+                d[col] = ''
+        rows.append(d)
 
     # 检查必要列是否有数据
     for col in ['date', 'code', 'type', 'qty', 'price']:
-        if col not in df.columns:
-            return False, pd.DataFrame(), [f"缺少必要列: {col}"]
-        null_count = df[col].isna().sum()
-        if null_count > len(df) * 0.5:
-            warnings.append(f"列 '{col}' 有 {null_count}/{len(df)} 空值，超过50%")
+        empty_count = sum(1 for r in rows if str(r.get(col, '')).strip() in ('', '0', 'nan'))
+        if empty_count > len(rows) * 0.5:
+            warnings.append(f"列 '{col}' 有 {empty_count}/{len(rows)} 空值，超过50%")
 
-    log(f"成功解析 {len(df)} 行数据")
-    return True, df, warnings
+    log(f"成功解析 {len(rows)} 行数据")
+    return True, rows, warnings
 
 
 # ── 逐行验证 ──
@@ -272,10 +334,10 @@ def main():
     log(f"数据库现有: {old_trades} 条交易, {old_pos} 持仓, {old_closed} 已清仓")
 
     # Step 1: 解析 Excel
-    ok, df, warnings = parse_excel(STMT_FILE)
+    ok, rows, warnings = parse_excel(STMT_FILE)
     for w in warnings:
         log(w, "WARNING")
-    if not ok or df is None:
+    if not ok or rows is None:
         flush_log()
         print(f"导入失败: 解析Excel失败")
         sys.exit(1)
@@ -286,8 +348,7 @@ def main():
     skip_reasons: List[str] = []
     error_count = 0
 
-    for idx in range(len(df)):
-        row = df.iloc[idx]
+    for idx, row in enumerate(rows):
         valid, trade, err = validate_row(row, idx)
         if not valid:
             if err == "skip_ipo":
@@ -298,7 +359,7 @@ def main():
                 log(err, "ERROR")
                 skip_reasons.append(err[:80])
             elif error_count == 11:
-                log(f"... 还有更多错误（已省略），共 {len(df) - idx + 10} 行待检查", "WARNING")
+                log(f"... 还有更多错误（已省略），共 {len(rows) - idx + 10} 行待检查", "WARNING")
             continue
         # 验证成功，但做最终完整性检查
         required_keys = ['date', 'code', 'type', 'qty', 'price']

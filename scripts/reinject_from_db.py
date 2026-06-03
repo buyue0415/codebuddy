@@ -45,7 +45,7 @@ def build_data():
 
     # Monthly kline
     km = {}
-    for r in db.execute("SELECT code, date, open, high, low, close, volume, change_pct FROM kline_monthly ORDER BY code, date DESC").fetchall():
+    for r in db.execute("SELECT code, date, open, high, low, close, volume, change_pct FROM kline_monthly ORDER BY code, date ASC").fetchall():
         code = r["code"]
         if code not in km: km[code] = []
         km[code].append([r["date"], r["open"], r["high"], r["low"], r["close"], r["volume"], r["change_pct"]])
@@ -78,7 +78,9 @@ def build_data():
     positions = {}
     for r in db.execute("SELECT * FROM positions").fetchall():
         code = r["code"]
-        divs = [dict(r2) for r2 in db.execute("SELECT date, amount, price FROM dividends WHERE code=? ORDER BY date", [code]).fetchall()]
+        divs = [dict(r2) for r2 in db.execute(
+            "SELECT date, amount, price FROM dividends WHERE code=? AND source='statement' ORDER BY date",
+            [code]).fetchall()]
         stock_trades = [t for t in all_trades if t["code"] == code]
         total_comm = sum(t["commission"] for t in stock_trades)
         total_stamp = sum(t["stamp_tax"] for t in stock_trades)
@@ -189,115 +191,8 @@ def build_data():
 # ============================================================
 
 def safe_inject(html: str, data: dict) -> str:
-    """安全地将 DATA 对象注入 HTML，使用字符串定位而非 regex。
-
-    查找 'let DATA;' 或 'let DATA = {...};' 或 'var DATA = {...};'
-    然后用新的 JSON 替换右边的值。
-    """
-    DATA_MARKER = 'let DATA;'
-    DATA_MARKER2 = 'let DATA ='
-    DATA_MARKER3 = 'var DATA ='
-
-    # 优先找 'let DATA;' (独立声明)
-    pos = html.find(DATA_MARKER)
-    if pos >= 0:
-        # 'let DATA;' 后面直接是新行 — 改成 'let DATA = {...};'
-        end_of_line = html.find('\n', pos)
-        if end_of_line < 0:
-            end_of_line = pos + len(DATA_MARKER)
-        before = html[:pos]
-        after = html[end_of_line:]
-        data_json = json.dumps(data, ensure_ascii=False, separators=(',', ':'))
-        return before + f'let DATA = {data_json};\n' + after
-
-    # 找 'let DATA = {...};' — 已有值，替换
-    pos = html.find(DATA_MARKER2)
-    if pos >= 0:
-        # 找到 { 的位置
-        brace_start = html.find('{', pos)
-        if brace_start < 0:
-            print("ERROR: let DATA = 后面找不到 {")
-            return html
-        # 找到匹配的 };
-        depth = 0
-        in_string = False
-        escape = False
-        end_pos = brace_start
-        for i in range(brace_start, len(html)):
-            c = html[i]
-            if escape:
-                escape = False
-                continue
-            if c == '\\' and in_string:
-                escape = True
-                continue
-            if c == '"' and not escape:
-                in_string = not in_string
-                continue
-            if in_string:
-                continue
-            if c == '{':
-                depth += 1
-            elif c == '}':
-                depth -= 1
-                if depth == 0:
-                    end_pos = i
-                    break
-        # 找到 };
-        semicolon = html.find(';', end_pos)
-        if semicolon < 0:
-            semicolon = end_pos + 1
-        before = html[:brace_start]
-        after = html[semicolon + 1:]
-        data_json = json.dumps(data, ensure_ascii=False, separators=(',', ':'))
-        return before + data_json + ';\n' + after
-
-    # 找 'var DATA = {...};'
-    pos = html.find(DATA_MARKER3)
-    if pos >= 0:
-        brace_start = html.find('{', pos)
-        if brace_start < 0:
-            print("ERROR: var DATA = 后面找不到 {")
-            return html
-        depth = 0
-        in_string = False
-        escape = False
-        end_pos = brace_start
-        for i in range(brace_start, len(html)):
-            c = html[i]
-            if escape:
-                escape = False
-                continue
-            if c == '\\' and in_string:
-                escape = True
-                continue
-            if c == '"' and not escape:
-                in_string = not in_string
-                continue
-            if in_string:
-                continue
-            if c == '{':
-                depth += 1
-            elif c == '}':
-                depth -= 1
-                if depth == 0:
-                    end_pos = i
-                    break
-        semicolon = html.find(';', end_pos)
-        if semicolon < 0:
-            semicolon = end_pos + 1
-        before = html[:brace_start]
-        after = html[semicolon + 1:]
-        data_json = json.dumps(data, ensure_ascii=False, separators=(',', ':'))
-        return before + data_json + ';\n' + after
-
-    print("ERROR: 未找到 DATA 声明 ('let DATA;' 或 'let DATA =' 或 'var DATA =')")
+    """V0.7 pure API mode: no longer injects inline DATA."""
     return html
-
-
-# ============================================================
-# 主流程
-# ============================================================
 
 def main():
     # 构建数据
@@ -323,17 +218,7 @@ def main():
     # 安全注入
     new_html = safe_inject(html, data)
 
-    # 注入前检测：如果没有找到 DATA 声明，尝试自动插入
-    if 'let DATA;' not in new_html and 'let DATA =' not in new_html:
-        # 可能之前的注入误删了 DATA 声明，尝试在 <script> 后插入
-        script_pos = new_html.find('<script>')
-        if script_pos >= 0:
-            insert_pos = new_html.find('\n', script_pos) + 1
-            data_json = json.dumps(data, ensure_ascii=False, separators=(',', ':'))
-            new_html = (new_html[:insert_pos] +
-                        f'let DATA = {data_json};\n' +
-                        new_html[insert_pos:])
-            print("INFO: 自动插入 let DATA 声明")
+    # V0.7: DATA injection disabled (pure API mode)
 
     # 写入
     with open(html_path, 'w', encoding='utf-8') as f:
