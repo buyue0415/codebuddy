@@ -1,6 +1,6 @@
 # 业务逻辑规则 (Business Logic Rules)
 
-> **版本**: v1.0 | **级别**: 🔴 MUST | **更新日期**: 2026-06-03
+> **版本**: v1.1 | **级别**: 🔴 MUST | **更新日期**: 2026-06-04
 
 ---
 
@@ -282,7 +282,19 @@ shutil.copy(original_path, backup_path)
 | 并发冲突 | 429 | 同步任务运行中 |
 | 服务端异常 | 500 | 未捕获异常 |
 
-### 7.3 响应大小限制
+### 7.4 V0.8 FastAPI 迁移规则
+
+**MUST**:
+- `server_v2.py` (FastAPI) 与 `server.py` (http.server) 的 API 响应格式完全一致: `{success, data/error}`
+- 所有端点接收相同参数，返回相同数据结构
+- HTTP 状态码映射保持一致 (200/400/404/409/429/500)
+- 子进程调用使用相同超时 (30s/60s/180s)
+
+**MAY**:
+- V0.8 通过 Swagger UI (`/docs`) 提供自动 API 文档
+- Pydantic 模型可用于增强请求校验（增量引入，不影响已有行为）
+
+### 7.5 响应大小限制
 
 ```python
 # SHOULD: 全量数据响应 (/api/v2/init) 不超过 1MB

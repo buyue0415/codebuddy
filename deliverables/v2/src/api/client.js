@@ -3,7 +3,7 @@
  * 通过 Vite proxy 调用 http://127.0.0.1:8765 的后端 API
  */
 
-const API_BASE = ''  // Vite proxy handles /api → :8765
+const API_BASE = ''  // Vite proxy handles /api → :8766
 
 export async function apiCall(method, path, body) {
   try {
@@ -13,10 +13,19 @@ export async function apiCall(method, path, body) {
     }
     if (body) opts.body = JSON.stringify(body)
     const r = await fetch(API_BASE + path, opts)
-    return await r.json()
+    let data
+    try {
+      data = await r.json()
+    } catch {
+      return { success: false, error: `服务器返回异常 (HTTP ${r.status})` }
+    }
+    if (!r.ok) {
+      return { success: false, error: data.detail || data.error || `HTTP ${r.status} 错误` }
+    }
+    return data
   } catch (e) {
     console.error('API error:', e)
-    return { success: false, error: e.message }
+    return { success: false, error: e.message || '网络请求失败，请确认后端已启动(端口8766)' }
   }
 }
 

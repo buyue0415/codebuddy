@@ -46,6 +46,22 @@ const routes = [
     name: 'manage',
     component: () => import('@/pages/Management.vue'),
   },
+  // V0.9: 模拟交易
+  {
+    path: '/backtest',
+    name: 'backtest',
+    component: () => import('@/pages/BacktestPage.vue'),
+  },
+  {
+    path: '/paper',
+    name: 'paper-trading',
+    component: () => import('@/pages/PaperTrading.vue'),
+  },
+  {
+    path: '/paper/history',
+    name: 'paper-history',
+    component: () => import('@/pages/PaperHistory.vue'),
+  },
 ]
 
 export default createRouter({

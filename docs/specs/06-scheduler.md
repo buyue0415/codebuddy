@@ -8,7 +8,7 @@
 
 统一的任务编排器，将多个独立脚本按业务时序组合执行。设计为被外部定时器调用，**不内置循环调度**。
 
-> **与 server.py trigger 的关系**: `scheduler.py` 用于外部定时器触发（如 Windows 任务计划程序）；`server.py` 的 `/api/trigger/*` 端点用于 Web 手动触发。两者互为备用，功能等价但调用方式不同。
+> **与 server_v2.py trigger 的关系**: `scheduler.py` 用于外部定时器触发（如 Windows 任务计划程序）；`server_v2.py` 的 `/api/trigger/*` 端点用于 Web 手动触发。两者互为备用，功能等价但调用方式不同。
 
 ---
 
@@ -54,7 +54,7 @@ python scheduler.py all        # sync → daily (顺序执行)
 | expert_reports | 每周一 09:00 | WorkBuddy 多 Agent | 手动触发 |
 | 持仓/交易/费用 | ON_UPLOAD | 广发对账单.xlsx | update_from_statement.py |
 | seasonal | 手动 | 历史统计 | 手动维护 |
-| watchlist | ON_ADD/DEL | Web 管理页 | server.py API |
+| watchlist | ON_ADD/DEL | Web 管理页 | server_v2.py API |
 
 ---
 

@@ -3,14 +3,17 @@
  * 替代旧版全局变量 DATA / trades / cp / cl / ...
  */
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
-import { loadAllData, clearCache } from '@/api/client.js'
+import { ref, shallowRef } from 'vue'
+import { loadAllData, clearCache, apiCall } from '@/api/client.js'
 
 export const useDataStore = defineStore('data', () => {
   const loading = ref(false)
+  const refreshing = ref(false)      // 仅刷新股价的轻量状态
   const error = ref(null)
+  const refreshError = ref(null)     // 刷新按钮的内联错误
   const watchlist = ref([])
   const quotes = ref({})
+  const prevQuotes = shallowRef({})  // 上一轮行情，用于判断涨跌
   const currentPositions = ref({})
   const closedPositions = ref({})
   const allTrades = ref([])
@@ -26,6 +29,8 @@ export const useDataStore = defineStore('data', () => {
   const config = ref({})
   const lastRefresh = ref('')
 
+  let _refreshTimer = null  // debounce
+
   async function fetchAll() {
     clearCache()
     loading.value = true
@@ -33,6 +38,7 @@ export const useDataStore = defineStore('data', () => {
     try {
       const { DATA, config: cfg, dividends: divs } = await loadAllData()
       watchlist.value = DATA.watchlist || []
+      prevQuotes.value = { ...quotes.value }
       quotes.value = DATA.quotes || {}
       currentPositions.value = DATA.positions?.current_positions || {}
       closedPositions.value = DATA.positions?.closed_positions || {}
@@ -53,15 +59,50 @@ export const useDataStore = defineStore('data', () => {
       console.error(e)
     } finally {
       loading.value = false
+      refreshing.value = false
     }
   }
 
+  /** Refresh real-time quotes via external API, then reload all data */
+  async function refreshQuotesAndReload() {
+    if (refreshing.value) return  // 防重复
+    refreshing.value = true
+    refreshError.value = null
+
+    try {
+      const res = await apiCall('POST', '/api/v2/quotes/refresh')
+      if (!res.success) {
+        refreshError.value = res.error || '刷新失败，请稍后重试'
+        refreshing.value = false
+        // 3秒后自动清除错误
+        _refreshTimer = setTimeout(() => { refreshError.value = null }, 4000)
+        return
+      }
+      await fetchAll()
+      // 成功后也清理timer
+      if (_refreshTimer) { clearTimeout(_refreshTimer); _refreshTimer = null }
+    } catch (e) {
+      refreshError.value = e.message || '网络请求失败'
+      console.error(e)
+      refreshing.value = false
+      _refreshTimer = setTimeout(() => { refreshError.value = null }, 4000)
+    }
+  }
+
+  /** Check if a stock's price changed since last fetch */
+  function priceChangeDirection(code) {
+    const prev = prevQuotes.value[code]?.price
+    const curr = quotes.value[code]?.price
+    if (!prev || !curr || prev === curr) return ''
+    return curr > prev ? 'up' : 'down'
+  }
+
   return {
-    loading, error, watchlist, quotes,
+    loading, refreshing, error, refreshError, watchlist, quotes, prevQuotes,
     currentPositions, closedPositions, allTrades, allNews,
     allKlineDaily, allKlineMonthly, seasonal, allDividends, expertReports,
     predictions, accuracyStats, learningParams,
     config, lastRefresh,
-    fetchAll,
+    fetchAll, refreshQuotesAndReload, priceChangeDirection,
   }
 })

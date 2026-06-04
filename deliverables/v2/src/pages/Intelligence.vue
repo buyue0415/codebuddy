@@ -7,8 +7,11 @@
           <button v-for="s in data.watchlist" :key="s.code" class="tab-btn" :class="{ active: activeCode === s.code }" @click="switchStock(s.code)">{{ s.name }}</button>
         </div>
         <span class="right-actions">
-          <button class="tab-btn" @click="triggerPredict" :disabled="refreshing">🔄 刷新</button>
-          <span class="status-text">{{ status }}</span>
+          <button class="tab-btn refresh-btn" :class="{ 'refresh-running': refreshing }" @click="triggerPredict" :disabled="refreshing">
+            <span class="btn-icon" :class="{ spinning: refreshing }">{{ refreshing ? '⏳' : '🔄' }}</span>
+            <span>{{ refreshing ? '刷新中…' : '刷新' }}</span>
+          </button>
+          <span class="status-text" :class="{ 'status-ok': status === '✅ 完成', 'status-err': status?.startsWith('❌') }">{{ status }}</span>
         </span>
       </div>
 
@@ -43,9 +46,9 @@
           </div>
         </div>
 
-        <!-- 30-Day chart -->
+        <!-- 10-Day chart -->
         <div class="card">
-          <h2>📈 30日预测走势</h2>
+          <h2>📈 10日预测走势</h2>
           <div class="chart-box" style="height:360px"><canvas ref="predChartCanvas"></canvas></div>
         </div>
 
@@ -68,14 +71,14 @@
               </div>
             </div>
             <div v-if="accStats" class="acc-row">
-              <b>准确率(近20):</b> 方向 {{ accStats.last_20?.direction?.rate != null ? (accStats.last_20.direction.rate * 100).toFixed(0) : '--' }}% | 区间 {{ accStats.last_20?.range?.rate != null ? (accStats.last_20.range.rate * 100).toFixed(0) : '--' }}%
+              <b>准确率(近20):</b> 方向 {{ accStats.last_20?.direction?.rate != null ? Number(accStats.last_20.direction.rate).toFixed(0) : '--' }}%<span class="acc-detail">({{ accStats.last_20?.direction?.correct || 0 }}/{{ accStats.last_20?.direction?.total || 0 }}命中)</span> | 区间 {{ accStats.last_20?.range?.rate != null ? Number(accStats.last_20.range.rate).toFixed(0) : '--' }}%<span class="acc-detail">({{ accStats.last_20?.range?.correct || 0 }}/{{ accStats.last_20?.range?.total || 0 }}命中)</span>
             </div>
           </div>
         </div>
 
         <!-- History timeline -->
         <div class="card">
-          <h2>📅 近20日预测 vs 实际</h2>
+          <h2>📅 预测 vs 实际</h2>
           <div class="dp-timeline" v-if="timelineItems.length">
             <div v-for="(p, i) in timelineItems" :key="i"
               class="dp-tl-item" :class="tlClass(p)">
@@ -96,7 +99,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useDataStore } from '@/stores/data.js'
 import { fmt, apiCall } from '@/api/client.js'
 
@@ -107,6 +110,7 @@ const predChartCanvas = ref(null)
 const refreshing = ref(false)
 const status = ref('')
 let predChart = null
+let statusTimer = null
 
 const today = new Date().toISOString().substring(0, 10)
 const curPrice = computed(() => data.quotes[activeCode.value]?.price || 0)
@@ -132,10 +136,11 @@ const signalList = computed(() => {
   const names = { macd:'MACD', rsi:'RSI', bollinger:'布林带', kdj:'KDJ', seasonal:'季节', atr:'ATR', money_flow:'资金', adx_trend:'ADX', obv_divergence:'OBV', vol_convergence:'波动率' }
   return Object.entries(names).map(([k, label]) => {
     const s = sig[k] || {}
-    const raw = s.raw || s.value || '--'
-    const val = typeof raw === 'number' ? raw.toFixed(2) : raw
+    // Prefer formatted value string (e.g. "+0.52%", "K50 D50 J50"), fallback to raw/factor
+    const displayVal = s.value || s.raw || s.factor
+    const val = displayVal != null ? (typeof displayVal === 'number' ? displayVal.toFixed(2) : String(displayVal)) : '--'
     return { key: k, label, dir: s.direction || 'neutral', val }
-  }).filter(s => s.val !== '--' && s.val !== '0')
+  }).filter(s => s.val !== '--')
 })
 
 const accStats = computed(() => data.accuracyStats[activeCode.value] || null)
@@ -181,7 +186,7 @@ function renderChart() {
   const histLabels = histSlice.map(k => k[0])
   const histClose = histSlice.map(k => k[2])
 
-  const futurePreds = allPreds.value.filter(p => p.date >= today).sort((a, b) => a.date.localeCompare(b.date)).slice(0, 30)
+  const futurePreds = allPreds.value.filter(p => p.date >= today).sort((a, b) => a.date.localeCompare(b.date)).slice(0, 10)
   const predLabels = [], predClose = [], predHigh = [], predLow = []
   const lastClose = histClose[histClose.length - 1]
   futurePreds.forEach(p => {
@@ -226,10 +231,20 @@ function renderChart() {
 }
 
 async function triggerPredict() {
-  refreshing.value = true; status.value = '刷新中...'
-  try { const r = await apiCall('POST', '/api/trigger/predict'); status.value = r?.success ? '✅ 完成' : '❌ 失败'; if (r?.success) await data.fetchAll() }
-  catch (e) { status.value = '❌ ' + e.message }
+  if (refreshing.value) return
+  refreshing.value = true; status.value = '刷新中…'
+  try {
+    const r = await apiCall('POST', '/api/trigger/predict')
+    if (r?.success) {
+      await data.fetchAll()
+      status.value = '✅ 完成'
+    } else {
+      status.value = '❌ ' + (r?.error || '预测失败')
+    }
+  } catch (e) { status.value = '❌ ' + (e.message || '网络错误') }
   refreshing.value = false
+  if (statusTimer) clearTimeout(statusTimer)
+  statusTimer = setTimeout(() => { status.value = '' }, 3000)
 }
 
 onMounted(async () => {
@@ -239,6 +254,8 @@ onMounted(async () => {
   renderChart()
 })
 watch(activeCode, async () => { await nextTick(); renderChart() })
+
+onUnmounted(() => { if (statusTimer) clearTimeout(statusTimer) })
 </script>
 
 <style scoped>
@@ -249,8 +266,24 @@ watch(activeCode, async () => { await nextTick(); renderChart() })
 .top-bar { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
 .top-bar .tab-bar { margin-bottom: 0; flex: 1; }
 .right-actions { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
-.status-text { font-size: 11px; color: #6b7280; }
+.status-text { font-size: 11px; color: #6b7280; transition: color 0.3s; }
+.status-text.status-ok { color: #059669; }
+.status-text.status-err { color: #dc2626; }
 .top-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+.refresh-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  transition: all 0.25s ease;
+}
+.refresh-btn:disabled { opacity: 0.7; cursor: not-allowed; }
+.refresh-btn:not(:disabled):hover {
+  background: #dbeafe; border-color: #93c5fd; transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.15);
+}
+.refresh-btn:not(:disabled):active { transform: translateY(0); }
+.refresh-running { background: #eff6ff; border-color: #60a5fa; color: #2563eb; }
+.btn-icon { display: inline-block; font-size: 14px; line-height: 1; }
+.btn-icon.spinning { animation: btnSpin 1s linear infinite; }
+@keyframes btnSpin { to { transform: rotate(360deg); } }
 @media (max-width: 800px) { .top-grid { grid-template-columns: 1fr; } }
 .dp-card { background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
 .dp-card h3 { font-size: 14px; color: #6b7280; margin-bottom: 8px; font-weight: 500; }
@@ -282,6 +315,7 @@ watch(activeCode, async () => { await nextTick(); renderChart() })
 .sig-val.dir-bearish { color: #16a34a; }
 .sig-val.dir-neutral { color: #6b7280; }
 .acc-row { margin-top: 8px; font-size: 12px; }
+.acc-detail { font-size: 10px; color: #9ca3af; margin-left: 1px; }
 
 /* Timeline */
 .dp-timeline { display: flex; gap: 4px; overflow-x: auto; padding: 4px 0 8px; scrollbar-width: thin; }

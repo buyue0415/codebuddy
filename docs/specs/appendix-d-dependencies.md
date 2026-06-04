@@ -6,15 +6,16 @@
 
 ```
                     ┌──────────────────────┐
-                    │  bank-stock-system   │
-                    │      .html           │
-                    │   (前端单页应用)      │
+                    │  Vue 3 SPA (Vite)    │
+                    │  + bank-stock-       │
+                    │    system.html (兼容) │
                     └──────────┬───────────┘
-                               │ fetch API
+                               │ fetch API (Vite proxy → :8766)
                     ┌──────────▼───────────┐
-                    │     server.py        │
-                    │  (ThreadedHTTPServer) │
-                    │      :8765           │
+                    │   server_v2.py       │
+                    │   (FastAPI+Uvicorn)  │
+                    │      :8766           │
+                    │  server.py 保留 :8765 │
                     └──┬──────┬──────┬─────┘
                        │      │      │
           ┌────────────▼──┐ ┌─▼──────▼──┐ ┌────────────▼──┐
@@ -57,7 +58,7 @@ NeoData → westock-data (Node.js)
         → calc_signals() [7项技术指标]
         → gen_pred() [次日预测生成]
         → SQLite (kline_daily, daily_predictions, prediction_hourly, prediction_signals, learning_params)
-        → server.py GET /api/v2/*
+        → server_v2.py GET /api/v2/*
         → 前端渲染
 ```
 
@@ -68,7 +69,7 @@ NeoData → westock-data (Node.js)
     → broker_statement.json
     → system_data.json
     → SQLite (positions, closed_positions, trades, dividends)
-    → server.py GET /api/v2/positions/*
+    → server_v2.py GET /api/v2/positions/*
     → 前端渲染
 ```
 
@@ -77,7 +78,7 @@ NeoData → westock-data (Node.js)
 NeoData → westock-data (Node.js)
         → fetch_news.py [Markdown解析 + 情感分析]
         → SQLite (news)
-        → server.py GET /api/v2/news
+        → server_v2.py GET /api/v2/news
         → 前端渲染
 ```
 
@@ -118,7 +119,7 @@ WorkBuddy 多Agent (trading-analysis skill)
 
 | 依赖 | 类型 | 使用模块 |
 |------|------|---------|
-| Python 3.13+ | 运行时 | 全部 |
+| Python 3.12+ | 运行时 | 全部 |
 | Node.js 22+ | 运行时 | sync_all, fetch_news |
 | westock-data (NeoData) | 数据源 | sync_all, fetch_news |
 | pandas / openpyxl | Python 库 | parse_statement, build_stock_db |

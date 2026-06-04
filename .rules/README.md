@@ -9,7 +9,7 @@
 | 文档 | 用途 | 强制执行级别 |
 |------|------|-------------|
 | [代码风格规范](./code-style.md) | 命名、格式、文档、错误处理 | 🔴 强制 (MUST) |
-| [架构约束](./architecture-constraints.md) | 模块分层、依赖方向、边界规则 | 🔴 强制 (MUST) |
+| [架构约束](./architecture-constraints.md) | 四层架构、依赖方向、目录结构、模块交互、强制校验 | 🔴 强制 (MUST) |
 | [业务逻辑规则](./business-logic-rules.md) | 数据一致性、预测生成、交易计算 | 🔴 强制 (MUST) |
 
 ---

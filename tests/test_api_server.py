@@ -1,7 +1,8 @@
-"""P1 [CRITICAL] API server tests — server.py routing and response format.
+"""P1 [CRITICAL] API server tests — V0.8 FastAPI response format.
 
 Covers: route resolution, JSON response format, HTTP methods,
 error handling, status codes (200/400/404/409/429/500).
+Backend: server_v2.py (FastAPI) / server.py (compat).
 """
 import os, sys, json, unittest
 from unittest.mock import Mock, patch

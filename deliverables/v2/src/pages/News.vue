@@ -11,8 +11,11 @@
           <button class="tab-btn" :class="{ active: filter === 'major' }" @click="setFilter('major')">⚠️ 重大事件</button>
         </div>
         <div class="right-actions">
-          <button class="tab-btn" @click="triggerNews" :disabled="refreshing">🔄 刷新新闻</button>
-          <span class="status-text" v-if="newsStatus">{{ newsStatus }}</span>
+          <button class="tab-btn refresh-btn" :class="{ 'refresh-running': refreshing }" @click="triggerNews" :disabled="refreshing">
+            <span class="btn-icon" :class="{ spinning: refreshing }">{{ refreshing ? '⏳' : '🔄' }}</span>
+            <span>{{ refreshing ? '刷新中…' : '刷新新闻' }}</span>
+          </button>
+          <span class="status-text" :class="{ 'status-ok': newsStatus === '✅ 刷新完成', 'status-err': newsStatus?.startsWith('❌') }" v-if="newsStatus">{{ newsStatus }}</span>
         </div>
       </div>
 
@@ -120,7 +123,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useDataStore } from '@/stores/data.js'
 import { apiCall } from '@/api/client.js'
 
@@ -137,6 +140,7 @@ const sentimentMonth = ref('')
 const refreshing = ref(false)
 const newsStatus = ref('')
 let sentChart = null
+let statusTimer = null
 
 const weekdays = ['一','二','三','四','五','六','日']
 const labels = { positive: '📈 利好', negative: '📉 利空', neutral: '➖ 中性' }
@@ -161,8 +165,6 @@ const sentimentData = computed(() => {
 const sentimentMonths = computed(() => {
   const months = [...new Set(sentimentData.value.map(n => n.date?.substring(0,7)).filter(Boolean))]
   months.sort().reverse()
-  const cur = new Date().toISOString().substring(0,7)
-  if (!months.includes(cur)) months.unshift(cur)
   return months
 })
 
@@ -225,7 +227,7 @@ function escapeHtml(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
-// Sentiment chart
+// Sentiment chart — driven only by month selector + stock filter, NOT by calendar
 function renderChart() {
   if (!sentCanvas.value) return
   if (sentChart) sentChart.destroy()
@@ -258,13 +260,20 @@ function renderChart() {
 }
 
 async function triggerNews() {
-  refreshing.value = true; newsStatus.value = '刷新中...'
+  if (refreshing.value) return
+  refreshing.value = true; newsStatus.value = '刷新中…'
   try {
     const r = await apiCall('POST', '/api/trigger/news')
-    newsStatus.value = r?.success ? '✅ 刷新完成' : '❌ ' + (r?.error || '')
-    if (r?.success) await data.fetchAll()
-  } catch (e) { newsStatus.value = '❌ ' + e.message }
+    if (r?.success) {
+      await data.fetchAll()
+      newsStatus.value = '✅ 刷新完成'
+    } else {
+      newsStatus.value = '❌ ' + (r?.error || '刷新失败')
+    }
+  } catch (e) { newsStatus.value = '❌ ' + (e.message || '网络错误') }
   refreshing.value = false
+  if (statusTimer) clearTimeout(statusTimer)
+  statusTimer = setTimeout(() => { newsStatus.value = '' }, 3000)
 }
 
 // Init
@@ -275,10 +284,22 @@ onMounted(async () => {
     await nextTick(); renderChart()
   }
 })
-watch(() => data.allNews, async () => {
-  sentimentMonth.value = sentimentMonths.value[0] || ''
+// Re-render chart when news data or stock filter changes
+// Keep user's selected month if it still has data; otherwise fall back to first month
+watch([() => data.allNews, () => filter.value], async () => {
+  const months = sentimentMonths.value
+  if (months.length > 0) {
+    if (!months.includes(sentimentMonth.value)) {
+      sentimentMonth.value = months[0]
+    }
+  } else {
+    sentimentMonth.value = ''
+  }
   await nextTick(); renderChart()
 })
+
+
+onUnmounted(() => { if (statusTimer) clearTimeout(statusTimer) })
 </script>
 
 <style scoped>
@@ -290,7 +311,23 @@ watch(() => data.allNews, async () => {
 .top-bar { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
 .top-bar .tab-bar { flex: 1; display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 0; }
 .right-actions { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
-.status-text { font-size: 11px; color: #6b7280; }
+.status-text { font-size: 11px; color: #6b7280; transition: color 0.3s; }
+.status-text.status-ok { color: #059669; }
+.status-text.status-err { color: #dc2626; }
+.refresh-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  transition: all 0.25s ease;
+}
+.refresh-btn:disabled { opacity: 0.7; cursor: not-allowed; }
+.refresh-btn:not(:disabled):hover {
+  background: #dbeafe; border-color: #93c5fd; transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.15);
+}
+.refresh-btn:not(:disabled):active { transform: translateY(0); }
+.refresh-running { background: #eff6ff; border-color: #60a5fa; color: #2563eb; }
+.btn-icon { display: inline-block; font-size: 14px; line-height: 1; }
+.btn-icon.spinning { animation: btnSpin 1s linear infinite; }
+@keyframes btnSpin { to { transform: rotate(360deg); } }
 
 /* Date picker */
 .date-bar { display: flex; align-items: center; gap: 8px; margin: -4px 0 10px; }
@@ -329,8 +366,8 @@ watch(() => data.allNews, async () => {
 .news-source { font-size: 11px; color: #9ca3af; margin-top: 4px; display: flex; align-items: center; gap: 8px; }
 .major-tag { color: #dc2626; font-weight: 600; }
 .sent-tag { font-size: 11px; padding: 1px 6px; border-radius: 4px; }
-.sent-positive { background: #dcfce7; color: #166534; }
-.sent-negative { background: #fee2e2; color: #991b1b; }
+.sent-positive { background: #fee2e2; color: #991b1b; }
+.sent-negative { background: #dcfce7; color: #166534; }
 .sent-neutral { background: #f3f4f6; color: #6b7280; }
 .empty { text-align: center; padding: 40px; color: #9ca3af; font-size: 14px; }
 .chart-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }

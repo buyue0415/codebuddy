@@ -1,6 +1,6 @@
 # 附录C: 系统配置项
 
-> **配置文件**: `data/config.json`, `server.py` 常量, `sync_all.py` 常量
+> **配置文件**: `data/config.json`, `server_v2.py` 常量, `sync_all.py` 常量
 
 ---
 
@@ -10,7 +10,7 @@
 |--------|-----|------|
 | `account` | `"51312640"` | 广发证券账户号 |
 | `broker` | `"广发证券"` | 券商名称 |
-| `server_port` | `8765` | HTTP 服务端口 |
+| `server_port` | `8766` | HTTP 服务端口 (原 8765 保留) |
 | `fee_rates.transfer_fee_per_1000` | `1.0` | 过户费 (元/千股) |
 | `fee_rates.regulatory_fee_rate` | `0.00002` | 规费率 |
 | `fee_rates.handling_fee_rate` | `0.0000487` | 经手费率 |
@@ -23,13 +23,13 @@
 
 ---
 
-## 运行时常量 (server.py)
+## 运行时常量 (server_v2.py)
 
 | 常量 | 值 | 说明 |
 |------|-----|------|
-| `PORT` | `8765` | HTTP 服务端口 |
+| `PORT` | `8766` | HTTP 服务端口 |
 | `ROOT` | 自动计算 | 项目根目录 |
-| `PYTHON` | `C:\Users\28312\.workbuddy\binaries\python\versions\3.14.3\python.exe` | Python 解释器路径 |
+| `PYTHON` | `C:\Users\28312\AppData\Local\Programs\Python\Python312\python.exe` | Python 解释器路径 (子进程调用) |
 | `NODE` | `C:\Users\28312\.workbuddy\binaries\node\versions\22.12.0\node.exe` | Node.js 运行时路径 |
 
 ---
@@ -51,9 +51,9 @@
 
 | 常量 | 值 | 说明 |
 |------|-----|------|
-| `PYTHON` | `...\python\versions\3.13.12\python.exe` | Python 路径 (与 server.py 版本不同) |
+| `PYTHON` | `...\python\versions\3.13.12\python.exe` | Python 路径 (V0.8 建议统一至 3.12+) |
 
-> ⚠️ **版本不一致**: `scheduler.py` 使用 Python 3.13.12，`server.py` 使用 3.14.3。需统一。
+> ⚠️ **版本不一致**: `scheduler.py` 使用 Python 3.13.12，`server_v2.py` 及其他脚本使用 3.12+。建议统一至系统 Python 3.12。
 
 ---
 

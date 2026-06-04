@@ -1,34 +1,38 @@
 # 模块1: Web API 服务层
 
-> **核心文件**: `server.py` | **前端**: `deliverables/bank-stock-system.html`, `deliverables/js/*.js` | **端口**: 8765 | **基类**: `ThreadedHTTPServer` | **版本**: V0.7
+> **核心文件**: `server_v2.py` (FastAPI) / `server.py` (原版保留) | **前端**: `deliverables/bank-stock-system.html`, `deliverables/v2/` (Vue 3) | **端口**: 8766 | **框架**: FastAPI + Uvicorn | **版本**: V0.8
 
 ---
 
 ## 1. 功能概述
 
-基于 Python `http.server` 的多线程 HTTP 服务器，为前端单页应用提供 RESTful API 接口。承接前端所有数据请求，通过子进程调用后台脚本执行数据同步任务，并直接查询 SQLite 数据库返回结构化 JSON 数据。
+基于 Python **FastAPI** 的异步 HTTP 服务器（V0.8 升级），为前端提供 RESTful API 接口。
+V0.8 从原 `http.server` (ThreadedHTTPServer) 迁移至 FastAPI，所有 API 输入输出、业务逻辑、边界条件与原版完全一致。
+原版 `server.py` (端口 8765) 保留兼容，两者可并行运行。
 
 ---
 
 ## 2. 核心业务逻辑
 
 ### 2.1 服务器初始化
-- 绑定 `127.0.0.1:8765`
-- 使用 `ThreadedHTTPServer`（`ThreadingMixIn` + `HTTPServer`），支持多请求并发
-- 守护线程模式 (`daemon_threads = True`)，主线程退出时自动回收
-- Python运行时路径通过动态检测或环境变量获取（V0.7改进）
+- 绑定 `127.0.0.1:8766`
+- 使用 **FastAPI** + **Uvicorn** (ASGI) 替代原 `ThreadingMixIn` + `HTTPServer`
+- 异步请求处理，自动线程池支持同步阻塞操作 (如 `subprocess.run()`)
+- 自动生成 Swagger UI 文档 (`/docs`)
+- CORS 中间件声明式配置
+- Python 运行时: 系统 Python 3.12+ (需 `fastapi`, `uvicorn`, `python-multipart`)
 
 ### 2.2 请求路由
-根据 URL path 和 HTTP method 分发：
+V0.8 使用 FastAPI `@app.get()` / `@app.post()` / `@app.delete()` 装饰器替代原 `if/elif startswith()` 串行匹配。
 
 | Method | 功能 |
 |--------|------|
-| **GET** | 数据查询 (40个端点)、静态文件服务 (`/deliverables/*`, `/data/*`)、DB查看器 (`/dbview`) |
+| **GET** | 数据查询 (46个端点)、静态文件服务 (`/deliverables/*`, `/data/*`)、DB查看器 (`/dbview`) |
 | **POST** | 自选股增删 (`/api/v2/watchlist`, `/api/watchlist/add`)、触发器执行 (`/api/trigger/*`)、对账单上传 (`/api/upload/statement`)、专家报告导入 (`/api/v2/expert/import`) |
 | **DELETE** | 自选股移除及级联数据清理 (`/api/v2/watchlist/{code}`) |
-| **OPTIONS** | CORS 预检，允许跨域请求 |
+| **OPTIONS** | CORS 预检 (自动处理，无需手动定义) |
 
-> ⚠️ **路由顺序敏感**: 精准匹配路径（如 `/api/v2/kline/daily`）必须在模糊匹配路径（如 `startswith("/api/v2/kline/daily")`）之前。静态文件路由有Python文件访问保护（403）。
+> ✅ **路由顺序**: FastAPI 自动按精确匹配 > 动态匹配优先级路由，消除原版 `startswith` 顺序敏感问题。`.py` 文件访问仍被拦截 (403)。
 
 ### 2.3 脚本编排
 通过 `subprocess.run()` 调用 Python 子进程执行后台脚本：
@@ -44,11 +48,13 @@
 ### 2.4 并发控制
 - 使用 `threading.Lock` + `_refresh_in_progress` 标志防止同步任务重复执行
 - 并发同步请求时返回 HTTP 429 (Too Many Requests)
+- Uvicorn 异步事件循环 + 线程池自动处理多请求并发
 
 ### 2.5 对账单上传处理
-- 手动解析 `multipart/form-data` 边界（未使用标准库解析器）
+- 使用 FastAPI `UploadFile` 标准处理 multipart/form-data (替代手动解析)
+- 魔数检测、格式诊断、备份逻辑与原版完全一致
 - 提取文件保存到 `广发易淘金PC版-普通对账单结果查询.xlsx`，创建 `.bak` 备份
-- 自动链式触发 `update_from_statement.py` → `reinject_data.py`
+- 自动链式触发 `update_from_statement.py` → `reinject_from_db.py`
 
 ---
 
@@ -96,7 +102,7 @@
 
 | 方向 | 模块/文件 | 说明 |
 |------|----------|------|
-| **依赖库** | `http.server`, `socketserver`, `urllib.parse`, `sqlite3`, `subprocess`, `threading`, `datetime`, `json` | Python标准库 |
+| **依赖库** | `fastapi`, `uvicorn`, `python-multipart`, `sqlite3`, `subprocess`, `threading`, `datetime`, `json` | PyPI + 标准库 |
 | **导入调用** | [数据库访问层](./02-database-layer.md) | `from db_helper import ...` |
 | **子进程调用** | [同步引擎](./03-sync-engine.md), [新闻抓取](./07-news-fetcher.md), [对账单解析](./09-statement-parser.md), [数据注入](./11-data-injection.md), [专家报告](./10-expert-report.md), [系统审计](./12-migration-and-audit.md) | 通过 `run_script()` |
 | **被依赖** | `bank-stock-system.html` (前端) | 通过 `fetch()` 调用所有API |

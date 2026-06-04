@@ -55,12 +55,18 @@ const navGroups = [
     { route: '/news', label: '新闻动态' },
     { route: '/kline', label: 'K线走势' },
   ]},
+  { id: 'paper',    label: '模拟交易', items: [
+    { route: '/backtest', label: '回测分析' },
+    { route: '/paper', label: '纸面交易' },
+    { route: '/paper/history', label: '交易历史' },
+  ]},
 ]
 
 const routeGroupMap = {
   '/overview': 'trade', '/trades': 'trade', '/fees': 'trade', '/manage': 'trade',
   '/intelligence': 'analysis', '/expert': 'analysis',
   '/news': 'info', '/kline': 'info',
+  '/backtest': 'paper', '/paper': 'paper', '/paper/history': 'paper',
 }
 
 const activeGroup = computed(() => routeGroupMap[route.path] || 'trade')

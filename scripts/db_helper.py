@@ -66,6 +66,42 @@ def get_quotes():
     rows = db.execute("SELECT * FROM quotes").fetchall()
     return {r['code']: {'price': r['price'], 'change': r['change'], 'open': r['open'], 'high': r['high'], 'low': r['low'], 'pe': r['pe'], 'pb': r['pb'], 'dy': r['dy']} for r in rows}
 
+
+def get_quotes_batch(db, codes: list) -> dict:
+    """Return quotes only for given codes using a single IN query. Reuses existing db connection."""
+    codes = list(codes)  # ensure list (not set) for sqlite3 params
+    if not codes:
+        return {}
+    placeholders = ','.join(['?' for _ in codes])
+    rows = db.execute(
+        f"SELECT * FROM quotes WHERE code IN ({placeholders})", codes
+    ).fetchall()
+    return {r['code']: {'price': r['price'], 'change': r['change'], 'open': r['open'],
+                         'high': r['high'], 'low': r['low'], 'pe': r['pe'], 'pb': r['pb'], 'dy': r['dy']}
+            for r in rows}
+
+
+def get_daily_predictions_batch(db, codes: list, date: str) -> dict:
+    """Return today's predictions for given codes in a single query. Reuses existing db connection."""
+    if not codes:
+        return {}
+    placeholders = ','.join(['?' for _ in codes])
+    # Use ROW_NUMBER to get the latest prediction per code for the given date
+    rows = db.execute(f"""
+        SELECT id, date, code, direction, confidence, entry_zone,
+               prev_close, high, low
+        FROM daily_predictions
+        WHERE code IN ({placeholders}) AND date = ?
+        ORDER BY id DESC
+    """, codes + [date]).fetchall()
+    # Keep only first (latest) per code since ORDER BY id DESC
+    result = {}
+    for r in rows:
+        code = r['code']
+        if code not in result:
+            result[code] = dict(r)
+    return result
+
 def get_positions():
     """Return all positions with correctly computed per_share dividends.
 
@@ -913,11 +949,11 @@ def insert_daily_prediction(code, date, prev_close, next_day, hourly, signals):
     return pid
 
 def clear_today_predictions(date):
-    """Clear predictions for future dates only (>date), preserving today's backfilled data."""
+    """Clear predictions for >=date (today and future), preserving only past backfilled data."""
     db = get_db()
-    db.execute("DELETE FROM prediction_signals WHERE pred_id IN (SELECT id FROM daily_predictions WHERE date>?)", [date])
-    db.execute("DELETE FROM prediction_hourly WHERE pred_id IN (SELECT id FROM daily_predictions WHERE date>?)", [date])
-    db.execute("DELETE FROM daily_predictions WHERE date>?", [date])
+    db.execute("DELETE FROM prediction_signals WHERE pred_id IN (SELECT id FROM daily_predictions WHERE date>=?)", [date])
+    db.execute("DELETE FROM prediction_hourly WHERE pred_id IN (SELECT id FROM daily_predictions WHERE date>=?)", [date])
+    db.execute("DELETE FROM daily_predictions WHERE date>=?", [date])
     db.commit(); db.close()
 
 def upsert_learning_params(code, lp):
@@ -1235,3 +1271,259 @@ def get_dividend_yield_series(code: str) -> dict:
         "estimated": is_estimated,
         "source": "ttm_calculated",
     }
+
+
+# ── Batch Operations ───────────────────────────────────────────────────
+
+def insert_daily_predictions_batch(predictions: list) -> int:
+    """Insert multiple daily predictions in a single transaction (executemany).
+    
+    Args:
+        predictions: list of dicts with keys: code, date, prev_close,
+                     next_day (dict with direction,confidence,high,low,advice,entry_zone),
+                     hourly (list), signals (dict)
+    Returns:
+        int: number of rows inserted
+    """
+    if not predictions:
+        return 0
+    db = get_db()
+    count = 0
+    try:
+        for pred in predictions:
+            nd = pred.get('next_day', {})
+            db.execute(
+                "INSERT OR REPLACE INTO daily_predictions "
+                "(code, date, prev_close, direction, confidence, high, low, advice, entry_zone) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    pred['code'], pred['date'], pred['prev_close'],
+                    nd.get('direction'), nd.get('confidence'),
+                    nd.get('high'), nd.get('low'),
+                    nd.get('advice'), nd.get('entry_zone'),
+                ]
+            )
+            pred_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
+            # Insert hourly predictions
+            for h in pred.get('hourly', []):
+                db.execute(
+                    "INSERT OR REPLACE INTO prediction_hourly "
+                    "(pred_id, block, pred_open, pred_high, pred_low, pred_close, direction, strength, note) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [pred_id, h.get('block'), h.get('pred_open'), h.get('pred_high'),
+                     h.get('pred_low'), h.get('pred_close'), h.get('direction'),
+                     h.get('strength'), h.get('note')]
+                )
+            # Insert signal snapshot
+            sig = pred.get('signals', {})
+            for sn, sv in sig.items():
+                if isinstance(sv, dict):
+                    db.execute(
+                        "INSERT OR REPLACE INTO prediction_signals "
+                        "(pred_id, name, value, direction, raw_value) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        [pred_id, sn, str(sv.get('value', '')),
+                         sv.get('direction'), sv.get('raw')]
+                    )
+            count += 1
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+    return count
+
+
+def insert_paper_trades_batch(trades: list) -> int:
+    """Insert multiple paper trades in a single transaction."""
+    if not trades:
+        return 0
+    db = get_db()
+    count = 0
+    try:
+        for t in trades:
+            db.execute(
+                "INSERT INTO paper_trades "
+                "(date, code, direction, qty, price, commission, stamp_tax, settlement, source, suggestion_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [t['date'], t['code'], t['direction'], t['qty'], t['price'],
+                 t.get('commission', 0), t.get('stamp_tax', 0),
+                 t['settlement'], t.get('source', 'auto_suggestion'),
+                 t.get('suggestion_id')]
+            )
+            count += 1
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+    return count
+
+
+# ── Schema Init & Paper Trading Queries ────────────────────────────────
+
+def init_backtest_tables():
+    """Initialize backtest/paper-trading tables. Idempotent."""
+    db = get_db()
+    try:
+        db.executescript("""
+            CREATE TABLE IF NOT EXISTS paper_account (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cash REAL NOT NULL DEFAULT 100000.0,
+                initial_capital REAL NOT NULL DEFAULT 100000.0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            );
+            CREATE TABLE IF NOT EXISTS paper_positions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL UNIQUE,
+                qty INTEGER NOT NULL DEFAULT 0, avg_cost REAL NOT NULL DEFAULT 0.0,
+                last_price REAL DEFAULT 0.0, market_value REAL DEFAULT 0.0,
+                unrealized_pnl REAL DEFAULT 0.0, unrealized_pnl_pct REAL DEFAULT 0.0,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                FOREIGN KEY (code) REFERENCES stocks(code)
+            );
+            CREATE INDEX IF NOT EXISTS idx_pp_code ON paper_positions(code);
+            CREATE TABLE IF NOT EXISTS paper_trades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, code TEXT NOT NULL,
+                direction TEXT NOT NULL CHECK(direction IN ('buy','sell')),
+                qty INTEGER NOT NULL, price REAL NOT NULL,
+                commission REAL DEFAULT 0.0, stamp_tax REAL DEFAULT 0.0,
+                settlement REAL NOT NULL, source TEXT DEFAULT 'auto_suggestion',
+                suggestion_id INTEGER DEFAULT NULL, realized_pnl REAL DEFAULT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                FOREIGN KEY (code) REFERENCES stocks(code)
+            );
+            CREATE INDEX IF NOT EXISTS idx_pt_date ON paper_trades(date);
+            CREATE INDEX IF NOT EXISTS idx_pt_code ON paper_trades(code);
+            CREATE INDEX IF NOT EXISTS idx_pt_code_date ON paper_trades(code, date);
+            CREATE TABLE IF NOT EXISTS paper_daily_snapshot (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL UNIQUE,
+                total_asset REAL NOT NULL, cash REAL NOT NULL, position_value REAL NOT NULL,
+                daily_pnl REAL DEFAULT 0.0, daily_pnl_pct REAL DEFAULT 0.0,
+                cumulative_return_pct REAL DEFAULT 0.0, note TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_pds_date ON paper_daily_snapshot(date);
+            CREATE TABLE IF NOT EXISTS backtest_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL,
+                finished_at TEXT, status TEXT NOT NULL DEFAULT 'running'
+                CHECK(status IN ('running','done','error')),
+                train_window INTEGER NOT NULL DEFAULT 252, test_window INTEGER NOT NULL DEFAULT 21,
+                stock_codes TEXT, total_stocks INTEGER DEFAULT 0,
+                completed_stocks INTEGER DEFAULT 0, current_stock TEXT,
+                summary_json TEXT, error_msg TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_br_status ON backtest_runs(status);
+            CREATE TABLE IF NOT EXISTS paper_suggestions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, code TEXT NOT NULL,
+                action TEXT NOT NULL CHECK(action IN ('buy','sell','hold','watch')),
+                qty INTEGER NOT NULL DEFAULT 0, price REAL NOT NULL DEFAULT 0.0,
+                confidence REAL NOT NULL DEFAULT 0.0, direction TEXT NOT NULL,
+                entry_zone REAL, reason TEXT, signals_bullish INTEGER DEFAULT 0,
+                signals_bearish INTEGER DEFAULT 0, position_weight REAL DEFAULT 0.0,
+                executed INTEGER NOT NULL DEFAULT 0, pred_id INTEGER,
+                created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                FOREIGN KEY (code) REFERENCES stocks(code),
+                FOREIGN KEY (pred_id) REFERENCES daily_predictions(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_ps_date ON paper_suggestions(date);
+            CREATE INDEX IF NOT EXISTS idx_ps_code ON paper_suggestions(code);
+            CREATE INDEX IF NOT EXISTS idx_ps_date_exec ON paper_suggestions(date, executed);
+        """)
+        for col in ['backtest_weights', 'regime_weights', 'backtest_timestamp']:
+            try: db.execute(f"ALTER TABLE learning_params ADD COLUMN {col} TEXT")
+            except: pass
+        db.commit()
+    finally:
+        db.close()
+
+
+def get_paper_account() -> dict | None:
+    db = get_db()
+    row = db.execute("SELECT * FROM paper_account ORDER BY id DESC LIMIT 1").fetchone()
+    db.close()
+    return dict(row) if row else None
+
+def get_paper_positions() -> list:
+    db = get_db()
+    # JOIN with quotes to compute live market_value, last_price, unrealized_pnl
+    rows = db.execute("""
+        SELECT pp.*, s.name,
+               COALESCE(q.price, pp.last_price, 0) AS last_price,
+               pp.qty * COALESCE(q.price, pp.last_price, 0) AS market_value,
+               pp.qty * COALESCE(q.price, pp.last_price, 0) - pp.qty * pp.avg_cost AS unrealized_pnl,
+               CASE WHEN pp.avg_cost > 0
+                    THEN ROUND((COALESCE(q.price, pp.last_price, 0) - pp.avg_cost) / pp.avg_cost * 100, 2)
+                    ELSE 0 END AS unrealized_pnl_pct
+        FROM paper_positions pp
+        LEFT JOIN stocks s ON pp.code = s.code
+        LEFT JOIN quotes q ON pp.code = q.code
+        WHERE pp.qty > 0
+    """).fetchall()
+    db.close()
+    return [dict(r) for r in rows]
+
+def get_paper_trades(code=None, limit=50, offset=0):
+    db = get_db()
+    if code:
+        rows = db.execute("SELECT pt.*, s.name FROM paper_trades pt LEFT JOIN stocks s ON pt.code=s.code WHERE pt.code=? ORDER BY pt.date DESC, pt.id DESC LIMIT ? OFFSET ?", [code, limit, offset]).fetchall()
+        total = db.execute("SELECT COUNT(*) FROM paper_trades WHERE code=?", [code]).fetchone()[0]
+    else:
+        rows = db.execute("SELECT pt.*, s.name FROM paper_trades pt LEFT JOIN stocks s ON pt.code=s.code ORDER BY pt.date DESC, pt.id DESC LIMIT ? OFFSET ?", [limit, offset]).fetchall()
+        total = db.execute("SELECT COUNT(*) FROM paper_trades").fetchone()[0]
+    db.close()
+    return [dict(r) for r in rows], total
+
+def get_paper_suggestions(date=None, code=None):
+    db = get_db()
+    q = "SELECT ps.*, s.name FROM paper_suggestions ps LEFT JOIN stocks s ON ps.code=s.code WHERE 1=1"
+    params = []
+    if date: q += " AND ps.date=?"; params.append(date)
+    if code: q += " AND ps.code=?"; params.append(code)
+    rows = db.execute(q + " ORDER BY ps.date DESC, ps.id DESC", params).fetchall()
+    db.close()
+    return [dict(r) for r in rows]
+
+def get_paper_daily_snapshots(days=90):
+    db = get_db()
+    rows = db.execute("SELECT * FROM paper_daily_snapshot ORDER BY date DESC LIMIT ?", [days]).fetchall()
+    db.close()
+    return [dict(r) for r in rows]
+
+def insert_backtest_run(status='running', train_window=252, test_window=21, stock_codes='', total_stocks=0):
+    db = get_db()
+    db.execute("INSERT INTO backtest_runs (started_at,status,train_window,test_window,stock_codes,total_stocks) VALUES (datetime('now','localtime'),?,?,?,?,?)", [status, train_window, test_window, stock_codes, total_stocks])
+    rid = db.execute("SELECT last_insert_rowid()").fetchone()[0]
+    db.commit(); db.close()
+    return rid
+
+def update_backtest_run(run_id, **kwargs):
+    db = get_db()
+    sets = ", ".join(f"{k}=?" for k in kwargs)
+    db.execute(f"UPDATE backtest_runs SET {sets} WHERE id=?", list(kwargs.values())+[run_id])
+    db.commit(); db.close()
+
+def get_backtest_runs():
+    db = get_db()
+    try:
+        return [dict(r) for r in db.execute("SELECT * FROM backtest_runs ORDER BY started_at DESC LIMIT 20").fetchall()]
+    finally:
+        db.close()
+
+def reset_paper_account(initial_capital=100000.0):
+    db = get_db()
+    db.execute("DELETE FROM paper_positions")
+    db.execute("DELETE FROM paper_account")
+    db.execute("INSERT INTO paper_account (cash,initial_capital) VALUES (?,?)", [initial_capital, initial_capital])
+    db.commit(); db.close()
+
+def upsert_paper_suggestion(sug):
+    db = get_db()
+    ex = db.execute("SELECT id FROM paper_suggestions WHERE date=? AND code=?", [sug['date'], sug['code']]).fetchone()
+    if ex:
+        db.execute("UPDATE paper_suggestions SET action=?,qty=?,price=?,confidence=?,direction=?,entry_zone=?,reason=?,signals_bullish=?,signals_bearish=?,position_weight=?,executed=?,pred_id=? WHERE id=?", [sug['action'], sug['qty'], sug['price'], sug['confidence'], sug['direction'], sug.get('entry_zone'), sug.get('reason',''), sug.get('signals_bullish',0), sug.get('signals_bearish',0), sug.get('position_weight',0), sug.get('executed',0), sug.get('pred_id'), ex['id']])
+    else:
+        db.execute("INSERT INTO paper_suggestions (date,code,action,qty,price,confidence,direction,entry_zone,reason,signals_bullish,signals_bearish,position_weight,executed,pred_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [sug['date'], sug['code'], sug['action'], sug['qty'], sug['price'], sug['confidence'], sug['direction'], sug.get('entry_zone'), sug.get('reason',''), sug.get('signals_bullish',0), sug.get('signals_bearish',0), sug.get('position_weight',0), sug.get('executed',0), sug.get('pred_id')])
+    db.commit(); db.close()

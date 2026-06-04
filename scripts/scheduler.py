@@ -56,8 +56,19 @@ def task_sync_all():
     print(f"\n{'='*50}")
     print(f"TASK: sync_all — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*50}")
-    ok = run('sync_all.py', 120)
+    ok = run('sync_all.py', 180)
+    if ok:
+        # Step 2: Auto-execute paper trading (independent script)
+        print(f"\n  → Running paper_trading auto (independent step)")
+        task_paper_trading()
     return ok
+
+def task_paper_trading():
+    """Run paper trading auto-execute as an independent step."""
+    print(f"\n{'='*50}")
+    print(f"TASK: paper_trading — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"{'='*50}")
+    return run('paper_trading.py auto', 30)
 
 def task_statement_update():
     """On upload: parse broker statement"""
@@ -74,10 +85,12 @@ def task_statement_update():
 if __name__ == '__main__':
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument('task', choices=['sync','statement'], default='sync')
+    ap.add_argument('task', choices=['sync','statement','paper'], default='sync')
     args = ap.parse_args()
 
     if args.task == 'sync':
         task_sync_all()
     elif args.task == 'statement':
         task_statement_update()
+    elif args.task == 'paper':
+        task_paper_trading()

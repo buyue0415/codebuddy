@@ -1,6 +1,6 @@
 # 附录B: API 端点清单
 
-> **基路径**: `http://localhost:8765` | **统一响应**: `{success: bool, data?, error?, message?, output?, count?, trace?}`
+> **基路径**: `http://localhost:8766` (原版: `http://localhost:8765`) | **统一响应**: `{success: bool, data?, error?, message?, output?, count?, trace?}`
 
 ---
 

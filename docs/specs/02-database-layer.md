@@ -85,7 +85,7 @@ upsert_positions(current, closed, trades) → 全量清空重建4张表
 
 | 约束 | 实现位置 |
 |------|---------|
-| `kline_daily.code ⊆ watchlist.code` | DELETE级联: `server.py:541-548` |
+| `kline_daily.code ⊆ watchlist.code` | DELETE级联: `server_v2.py:_cleanup_stock_data()` |
 | `daily_predictions.code ⊆ watchlist.code` | 同上 |
 | `quotes.code ⊆ watchlist.code` | 同上 |
 | `prediction_hourly.pred_id → daily_predictions.id` | Schema外键: `migrate_to_sqlite.py:40` |

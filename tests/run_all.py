@@ -61,17 +61,17 @@ def run_module(module_name, verbosity=2):
 
 
 def run_integration_tests():
-    """Run the API-based integration test (requires server on :8765)."""
-    print_header("API Integration Tests (requires server on localhost:8765)")
+    """Run the API-based integration test (requires server on :8766)."""
+    print_header("API Integration Tests (requires server on localhost:8766)")
     
     # Check if server is running
     import urllib.request
     try:
-        resp = urllib.request.urlopen("http://localhost:8765/api/v2/init", timeout=3)
+        resp = urllib.request.urlopen("http://localhost:8766/api/v2/init", timeout=3)
         print("  Server: ONLINE\n")
     except Exception as e:
         print(f"  SERVER OFFLINE: {e}")
-        print("  Start server.py first, then re-run with --integration\n")
+        print("  Start server_v2.py first, then re-run with --integration\n")
         return None
 
     # Run the existing integration test suite
