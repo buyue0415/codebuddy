@@ -49,7 +49,7 @@
       <template v-if="!detailNews">
         <div class="card" v-if="filteredList.length">
           <h2>📰 近期新闻动态</h2>
-          <div class="news-timeline">
+          <div class="news-scroll-wrap"><div class="news-timeline">
             <div v-for="(n, i) in filteredList" :key="i"
               class="news-item" :class="{ major: n.major }" :style="{ animationDelay: (i * 0.04) + 's' }">
               <div class="news-date">{{ n.date }}</div>
@@ -68,7 +68,7 @@
                 </div>
               </div>
             </div>
-          </div>
+          </div></div>
         </div>
         <div v-else class="card"><h2>📰 近期新闻动态</h2><div class="empty">暂无新闻数据</div></div>
 
@@ -352,6 +352,11 @@ onUnmounted(() => { if (statusTimer) clearTimeout(statusTimer) })
 .dp-status { font-size: 11px; color: #6b7280; }
 
 /* News items */
+.news-scroll-wrap{max-height:480px;overflow-y:auto;overflow-x:hidden;padding-right:4px}
+.news-scroll-wrap::-webkit-scrollbar{width:6px}
+.news-scroll-wrap::-webkit-scrollbar-track{background:transparent}
+.news-scroll-wrap::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px}
+.news-scroll-wrap::-webkit-scrollbar-thumb:hover{background:#94a3b8}
 .news-timeline { margin-top: 12px; }
 .news-item { padding: 14px 0; border-bottom: 1px solid #f1f5f9; display: flex; gap: 14px; align-items: flex-start; animation: newsIn .25s ease-out both; }
 @keyframes newsIn { 0% { opacity: 0; transform: translateY(10px) } 100% { opacity: 1; transform: translateY(0) } }

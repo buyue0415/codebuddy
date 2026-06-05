@@ -150,15 +150,33 @@ def _calc_seasonal_pct(code: str) -> list:
 
 
 # ======================================================================
+# Logging setup
+# ======================================================================
+
+LOG_PATH = os.path.join(ROOT, "data", "sync_log.txt")
+
+def _log(msg: str):
+    """Append timestamped message to sync log file."""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    line = f"[{timestamp}] {msg}"
+    try:
+        with open(LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
+    print(line)
+
+
+# ======================================================================
 # Main execution (only runs when script is executed directly)
 # ======================================================================
 
 def main():
     watchlist = get_watchlist()
-    print(f"[sync_all] Watchlist: {len(watchlist)} stocks")
+    _log(f"sync_all START: {len(watchlist)} stocks")
 
     # Step 1: Fetch news with dedup
-    print("[Step 1] Fetching news for all watchlist stocks ...")
+    _log("Step 1: Fetching news...")
     try:
         from fetch_news import fetch_news_node
         from db_helper import upsert_news
@@ -186,7 +204,7 @@ def main():
         print(f"  News fetch skipped: {e}")
 
     # Step 1.5: Fetch dividend history from web (before K-line, so calc_dividend_yield has data)
-    print("\n[Step 1.5] Fetching dividend history from web ...")
+    _log("Step 1.5: Fetching dividends...")
     try:
         from fetch_dividends import fetch_all as fetch_dividends_all
         div_summary = fetch_dividends_all()
@@ -206,7 +224,7 @@ def main():
         print(f"  Dividend sync from trades skipped: {e}")
 
     # Step 2: Parallel K-line fetch
-    print("\n[Step 2] Fetching daily K-line in parallel ...")
+    _log("Step 2: Fetching K-line parallel...")
     kline_results = {}
     if watchlist:
         max_workers = min(len(watchlist), 4)
@@ -217,7 +235,8 @@ def main():
                 kline_results[code] = bars
 
     # Step 3: Backfill predictions
-    print("\n[Step 3] Backfilling predictions with actual data ...")
+    _log("Step 3: Backfilling predictions...")
+    total_backfilled = 0
     for stock in watchlist:
         code = stock['code']
         kdata = kline_results.get(code, [])
@@ -269,9 +288,11 @@ def main():
             print(f"  {stock['name']}({code}) {pred_date}: dir={'HIT' if dir_hit else 'MISS'}, range={'HIT' if range_hit else 'MISS'}")
         if backfilled == 0:
             print(f"  {stock['name']}({code}): no unverified past predictions")
+        total_backfilled += backfilled
+    _log(f"Step 3 DONE: {total_backfilled} predictions backfilled")
 
     # Step 4: Recalculate accuracy
-    print("[Step 4] Recalculating accuracy stats ...")
+    _log("Step 4: Recalculating accuracy stats...")
     for stock in watchlist:
         code = stock['code']
         db = get_db()
@@ -376,7 +397,7 @@ def main():
                 print(f"  → Reset failed: {e}")
 
     # Step 5: Self-learning (Adaptive MWU V3)
-    print("\n[Step 5] Self-learning updates (Adaptive MWU) ...")
+    _log("Step 5: Self-learning updates...")
     for stock in watchlist:
         code = stock['code']
         db = get_db()
@@ -505,7 +526,7 @@ def main():
                 print(f"  DB write learning {code} failed: {e}")
 
     # Step 6: Generate 10-day predictions (future only, preserve today's backfill)
-    print("\n[Step 6] Generating 10-day predictions ...")
+    _log("Step 6: Generating 10-day predictions...")
     NUM_DAYS = 10
     try:
         clear_today_predictions(TODAY)  # Only clears >=TODAY
@@ -573,7 +594,7 @@ def main():
               f"→ {inserted}/{NUM_DAYS} days predicted")
 
     # Step 7: Seasonal + monthly kline + quotes
-    print("\n[Step 7] Seasonal + monthly + quotes ...")
+    _log("Step 7: Seasonal + monthly + quotes...")
     for stock in watchlist:
         code = stock['code']
         # Step 7a: Build & write monthly kline first (so seasonal reads fresh data)
@@ -625,7 +646,22 @@ def main():
             except Exception as e:
                 print(f"  DB write quote {code} failed: {e}")
 
-    print(f"\n[sync_all] Done. {len(watchlist)} stocks, {len(all_new_preds)} predictions.")
+    _log(f"sync_all DONE: {len(watchlist)} stocks, {len(all_new_preds)} predictions, {total_backfilled} backfilled")
+
+    # Post-sync audit: check for any remaining stale unverified predictions
+    stale_count = 0
+    try:
+        db_audit = get_db()
+        stale = db_audit.execute(
+            "SELECT COUNT(*) as c FROM daily_predictions WHERE dir_hit IS NULL AND date < ?",
+            [TODAY]
+        ).fetchone()
+        stale_count = stale['c'] if stale else 0
+        db_audit.close()
+    except Exception:
+        pass
+    if stale_count > 0:
+        _log(f"WARNING: {stale_count} predictions still unverified after sync (date < {TODAY})")
 
 
 if __name__ == '__main__':

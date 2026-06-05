@@ -8,6 +8,7 @@ import {
   fetchPaperTrades, fetchPaperPerformance, resetPaperAccount,
   runBacktest, fetchBacktestStatus, stopBacktest as apiStopBacktest,
   fetchBacktestResults, fetchBacktestHistory,
+  fetchIntraday,
 } from '@/api/paper.js'
 
 export const usePaperStore = defineStore('paper', () => {
@@ -22,6 +23,13 @@ export const usePaperStore = defineStore('paper', () => {
   const tradesTotal = ref(0)
   const performance = ref(null) // {sharpe_ratio, max_drawdown, equity_curve, ...}
   const equityCurve = ref([])
+
+  // Intraday
+  const intradayData = ref([])       // [{timestamp, price, change_pct, volume}, ...]
+  const intradayCode = ref('')       // currently viewing stock code
+  const selectedDate = ref('')       // selected date YYYY-MM-DD
+  const availableDates = ref([])     // dates with intraday data
+  const marketStatus = ref('open')   // 'open' | 'closed' | 'non_trading_day'
 
   // Backtest
   const backtestStatus = ref('idle') // idle | running | done | error | cancelled
@@ -42,9 +50,25 @@ export const usePaperStore = defineStore('paper', () => {
     if (r?.success) positions.value = r.data || []
   }
 
-  async function loadSuggestions(code = '') {
-    const r = await fetchPaperSuggestions(code)
-    if (r?.success) suggestions.value = r.data || []
+  async function loadSuggestions(code = '', date = '') {
+    const r = await fetchPaperSuggestions(code, date)
+    if (r?.success) {
+      suggestions.value = r.data || []
+      // Capture market_status from response
+      if (r.market_status) {
+        marketStatus.value = r.market_status
+      }
+    }
+  }
+
+  async function loadIntraday(code, date = '') {
+    intradayCode.value = code
+    selectedDate.value = date || new Date().toISOString().slice(0, 10)
+    const r = await fetchIntraday(code, date)
+    if (r?.success && r.data) {
+      intradayData.value = r.data.data || []
+      availableDates.value = r.data.available_dates || []
+    }
   }
 
   async function loadTrades(code = '', limit = 50, offset = 0) {
@@ -134,9 +158,10 @@ export const usePaperStore = defineStore('paper', () => {
   return {
     loading, error, account, positions, suggestions, trades, tradesTotal,
     performance, equityCurve, isInitialized,
+    intradayData, intradayCode, selectedDate, availableDates, marketStatus,
     backtestStatus, backtestRunId, backtestProgress, backtestResults, backtestHistory,
     loadAccount, loadPositions, loadSuggestions, loadTrades, loadPerformance,
-    resetAccount,
+    resetAccount, loadIntraday,
     startBacktest, pollBacktestStatus, stopBacktest, loadBacktestResults, loadBacktestHistory,
   }
 })

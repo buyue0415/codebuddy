@@ -159,17 +159,24 @@ function dirText(d) { return d === 'bullish' ? '看涨' : d === 'bearish' ? '看
 function tlClass(p) {
   const a = p.actual || {}
   if (a.next_day_direction_hit != null) return a.next_day_direction_hit ? 'hit' : 'miss'
-  return p.date === today ? 'today pending' : 'pending'
+  if (p.date === today) return 'today pending'
+  if (p.date < today) return 'stale'
+  return 'pending'
 }
 function tlStatus(p) {
   const a = p.actual || {}
   if (a.next_day_direction_hit != null) return a.next_day_direction_hit ? 'hit' : 'miss'
-  return p.date === today ? 'pending' : 'pending'
+  if (p.date === today) return 'pending'
+  if (p.date < today) return 'stale'
+  return 'pending'
 }
 function tlLabel(p) {
   const a = p.actual || {}
   if (a.next_day_direction_hit != null) return a.next_day_direction_hit ? '命中' : '未命中'
-  return p.date === today ? '预测中' : '待验证'
+  if (p.date === today) return '预测中'
+  // Past date without verification: stale
+  if (p.date < today) return '待回填'
+  return '待验证'
 }
 
 function switchStock(code) { activeCode.value = code }
@@ -323,6 +330,7 @@ onUnmounted(() => { if (statusTimer) clearTimeout(statusTimer) })
 .dp-tl-item.today { border-color: #2563eb; background: #eff6ff; }
 .dp-tl-item.hit { border-color: #86efac; background: #f0fdf4; }
 .dp-tl-item.miss { border-color: #fca5a5; background: #fef2f2; }
+.dp-tl-item.stale { border-color: #fdba74; background: #fff7ed; }
 .dp-tl-date { font-weight: 600; color: #374151; margin-bottom: 3px; }
 .dp-tl-item.today .dp-tl-date { color: #2563eb; }
 .dp-tl-dir { font-size: 18px; margin: 2px 0; }
@@ -334,6 +342,7 @@ onUnmounted(() => { if (statusTimer) clearTimeout(statusTimer) })
 .dp-tl-status.hit { background: #dcfce7; color: #16a34a; }
 .dp-tl-status.miss { background: #fee2e2; color: #dc2626; }
 .dp-tl-status.pending { background: #f3f4f6; color: #6b7280; }
+.dp-tl-status.stale { background: #fed7aa; color: #c2410c; }
 .tl-legend { display: flex; gap: 12px; font-size: 11px; color: #6b7280; margin-top: 4px; align-items: center; }
 .tl-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 .tl-dot.hit { background: #16a34a; }

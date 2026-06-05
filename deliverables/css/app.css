@@ -203,6 +203,7 @@ tr:hover td{background:#f8fafc}
 .dp-tl-item.hit{border-color:#86efac;background:#f0fdf4}
 .dp-tl-item.miss{border-color:#fca5a5;background:#fef2f2}
 .dp-tl-item.pending{border-color:#e5e7eb;background:#f9fafb}
+.dp-tl-item.stale{border-color:#fdba74;background:#fff7ed}
 .dp-tl-item:hover{transform:translateY(-2px);box-shadow:0 2px 8px rgba(0,0,0,0.08)}
 .dp-tl-date{font-weight:600;color:#374151;margin-bottom:3px;white-space:nowrap}
 .dp-tl-item.today .dp-tl-date{color:#2563eb}
@@ -215,6 +216,7 @@ tr:hover td{background:#f8fafc}
 .dp-tl-status.hit{background:#dcfce7;color:#16a34a}
 .dp-tl-status.miss{background:#fee2e2;color:#dc2626}
 .dp-tl-status.pending{background:#f3f4f6;color:#6b7280}
+.dp-tl-status.stale{background:#fed7aa;color:#c2410c}
 .ac-wrapper{position:relative}
 .ac-dropdown{position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #d1d5db;border-radius:0 0 8px 8px;box-shadow:0 4px 12px rgba(0,0,0,.1);z-index:200;max-height:260px;overflow-y:auto;display:none}
 .ac-dropdown.show{display:block}

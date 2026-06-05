@@ -1431,6 +1431,19 @@ def init_backtest_tables():
             CREATE INDEX IF NOT EXISTS idx_ps_date ON paper_suggestions(date);
             CREATE INDEX IF NOT EXISTS idx_ps_code ON paper_suggestions(code);
             CREATE INDEX IF NOT EXISTS idx_ps_date_exec ON paper_suggestions(date, executed);
+            -- Intraday quotes for minute-level price tracking
+            CREATE TABLE IF NOT EXISTS intraday_quotes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                price REAL NOT NULL,
+                change_pct REAL DEFAULT 0,
+                volume INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                FOREIGN KEY (code) REFERENCES stocks(code)
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_iq_code_ts ON intraday_quotes(code, timestamp);
+            CREATE INDEX IF NOT EXISTS idx_iq_code_date ON intraday_quotes(code, date(timestamp));
         """)
         for col in ['backtest_weights', 'regime_weights', 'backtest_timestamp']:
             try: db.execute(f"ALTER TABLE learning_params ADD COLUMN {col} TEXT")
@@ -1448,14 +1461,18 @@ def get_paper_account() -> dict | None:
 
 def get_paper_positions() -> list:
     db = get_db()
-    # JOIN with quotes to compute live market_value, last_price, unrealized_pnl
-    rows = db.execute("""
-        SELECT pp.*, s.name,
-               COALESCE(q.price, pp.last_price, 0) AS last_price,
-               pp.qty * COALESCE(q.price, pp.last_price, 0) AS market_value,
-               pp.qty * COALESCE(q.price, pp.last_price, 0) - pp.qty * pp.avg_cost AS unrealized_pnl,
+    # MUST list columns explicitly — DON'T use pp.* because the table stores
+    # market_value/unrealized_pnl which would shadow the live-computed values.
+    # Use kline_daily latest close as second fallback after quotes table
+    _kd = "(SELECT close FROM kline_daily WHERE code=pp.code ORDER BY date DESC LIMIT 1)"
+    rows = db.execute(f"""
+        SELECT pp.id, pp.code, pp.qty, pp.avg_cost, pp.updated_at,
+               s.name,
+               COALESCE(q.price, {_kd}, pp.last_price, pp.avg_cost, 0) AS last_price,
+               pp.qty * COALESCE(q.price, {_kd}, pp.last_price, pp.avg_cost, 0) AS market_value,
+               pp.qty * COALESCE(q.price, {_kd}, pp.last_price, pp.avg_cost, 0) - pp.qty * pp.avg_cost AS unrealized_pnl,
                CASE WHEN pp.avg_cost > 0
-                    THEN ROUND((COALESCE(q.price, pp.last_price, 0) - pp.avg_cost) / pp.avg_cost * 100, 2)
+                    THEN ROUND((COALESCE(q.price, {_kd}, pp.last_price, pp.avg_cost, 0) - pp.avg_cost) / pp.avg_cost * 100, 2)
                     ELSE 0 END AS unrealized_pnl_pct
         FROM paper_positions pp
         LEFT JOIN stocks s ON pp.code = s.code
@@ -1527,3 +1544,73 @@ def upsert_paper_suggestion(sug):
     else:
         db.execute("INSERT INTO paper_suggestions (date,code,action,qty,price,confidence,direction,entry_zone,reason,signals_bullish,signals_bearish,position_weight,executed,pred_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [sug['date'], sug['code'], sug['action'], sug['qty'], sug['price'], sug['confidence'], sug['direction'], sug.get('entry_zone'), sug.get('reason',''), sug.get('signals_bullish',0), sug.get('signals_bearish',0), sug.get('position_weight',0), sug.get('executed',0), sug.get('pred_id')])
     db.commit(); db.close()
+
+
+# ── Intraday Quotes ─────────────────────────────────────────────────────
+
+def get_intraday_quotes(code: str, date: str = None) -> list:
+    """Get intraday minute-level quotes for a stock on a given date.
+
+    Args:
+        code: Stock code
+        date: Date string 'YYYY-MM-DD'. Defaults to today.
+
+    Returns:
+        List of dicts with keys: timestamp, price, change_pct, volume
+    """
+    if date is None:
+        from datetime import datetime as _dt
+        date = _dt.now().strftime('%Y-%m-%d')
+
+    db = get_db()
+    try:
+        rows = db.execute(
+            "SELECT timestamp, price, change_pct, volume FROM intraday_quotes "
+            "WHERE code=? AND date(timestamp)=? ORDER BY timestamp ASC",
+            [code, date]
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        db.close()
+
+
+def insert_intraday_quotes(rows: list):
+    """Insert or replace intraday quote rows.
+
+    Args:
+        rows: List of dicts with keys: code, timestamp, price, change_pct, volume
+    """
+    if not rows:
+        return
+    db = get_db()
+    try:
+        db.executemany(
+            "INSERT OR REPLACE INTO intraday_quotes (code, timestamp, price, change_pct, volume) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [[r['code'], r['timestamp'], r['price'], r.get('change_pct', 0), r.get('volume', 0)] for r in rows]
+        )
+        db.commit()
+    finally:
+        db.close()
+
+
+def get_intraday_dates_for_code(code: str, limit: int = 90) -> list:
+    """Get list of dates that have intraday data for a stock.
+
+    Args:
+        code: Stock code
+        limit: Max number of dates to return
+
+    Returns:
+        List of date strings 'YYYY-MM-DD'
+    """
+    db = get_db()
+    try:
+        rows = db.execute(
+            "SELECT DISTINCT date(timestamp) as d FROM intraday_quotes "
+            "WHERE code=? ORDER BY d DESC LIMIT ?",
+            [code, limit]
+        ).fetchall()
+        return [r['d'] for r in rows]
+    finally:
+        db.close()

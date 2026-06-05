@@ -68,6 +68,16 @@ def task_paper_trading():
     print(f"\n{'='*50}")
     print(f"TASK: paper_trading — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*50}")
+
+    # Market time check — skip if market is closed
+    try:
+        from market_utils import is_market_open as _open
+        if not _open():
+            print(f"  [SKIP] Market closed. Skipping paper trading auto-execute.")
+            return True
+    except ImportError:
+        pass  # market_utils not available, proceed anyway
+
     return run('paper_trading.py auto', 30)
 
 def task_statement_update():
@@ -81,11 +91,28 @@ def task_statement_update():
         return ok2
     return False
 
+def task_intraday_collect():
+    """Run intraday data collection (single pass)."""
+    print(f"\n{'='*50}")
+    print(f"TASK: intraday_collect — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"{'='*50}")
+    script = os.path.join(ROOT, 'scripts', 'collect_intraday.py')
+    try:
+        r = subprocess.run([PYTHON, script, 'once'], cwd=ROOT, capture_output=True, text=True, timeout=60)
+        ok = r.returncode == 0
+        print(f"  {'OK' if ok else 'FAIL'} intraday_collect")
+        if r.stderr.strip(): print(f"  stderr: {r.stderr.strip()[-400:]}")
+        return ok
+    except subprocess.TimeoutExpired:
+        print(f"  [TIMEOUT] intraday_collect")
+        return False
+
+
 # ===== CLI =====
 if __name__ == '__main__':
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument('task', choices=['sync','statement','paper'], default='sync')
+    ap.add_argument('task', choices=['sync','statement','paper','intraday'], default='sync')
     args = ap.parse_args()
 
     if args.task == 'sync':
@@ -94,3 +121,5 @@ if __name__ == '__main__':
         task_statement_update()
     elif args.task == 'paper':
         task_paper_trading()
+    elif args.task == 'intraday':
+        task_intraday_collect()

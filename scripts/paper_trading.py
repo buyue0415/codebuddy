@@ -13,7 +13,7 @@ Architecture: Business Logic layer.
 Data access: only via db_helper.py.
 Called by: scheduler.py (auto), server_v2.py (API backend)
 """
-import json, os, sys
+import json, os, sys, subprocess
 from datetime import datetime
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -27,6 +27,12 @@ from db_helper import (
     upsert_paper_suggestion, init_backtest_tables,
 )
 from signals import TODAY
+from market_utils import is_market_open
+
+# Paths for westock-data live quote fetching
+_NODE = r'C:\Users\28312\.workbuddy\binaries\node\versions\22.12.0\node.exe'
+_WESTOCK = r'C:\Users\28312\.workbuddy\plugins\marketplaces\experts\plugins\stock-partner-team\skills\westock-data'
+_SCRIPT = 'scripts/index.js'
 
 # ── Constants ──────────────────────────────────────────────────────────
 INITIAL_CAPITAL = 100000.0
@@ -35,6 +41,71 @@ STAMP_TAX_RATE = 0.001     # 0.1% (sell only)
 MIN_CONFIDENCE = 0.5        # Minimum confidence to act
 MAX_POSITION_WEIGHT = 0.3   # Max 30% of portfolio in one stock
 LOT_SIZE = 100
+
+
+# ── Live Price Helpers ─────────────────────────────────────────────────
+
+def _market_code(stock_code: str) -> str:
+    """Convert stock code to westock-data market_code format."""
+    if stock_code.startswith('6'):
+        return f'sh{stock_code}'
+    elif stock_code.startswith('0') or stock_code.startswith('3'):
+        return f'sz{stock_code}'
+    elif stock_code.startswith('4') or stock_code.startswith('8'):
+        return f'bj{stock_code}'
+    return f'sh{stock_code}'
+
+
+def fetch_live_prices(codes: list) -> dict:
+    """Fetch live prices via westock-data quote (supports batch).
+
+    Args:
+        codes: List of stock codes (e.g. ['601166', '000001'])
+
+    Returns:
+        Dict of {code: price}, or empty dict on failure.
+    """
+    if not codes:
+        return {}
+    mkt_codes = ','.join(_market_code(c) for c in codes)
+    try:
+        result = subprocess.run(
+            [_NODE, _SCRIPT, 'quote', mkt_codes],
+            cwd=_WESTOCK, capture_output=True, timeout=15,
+        )
+        text = ''
+        if result.stdout:
+            try:
+                text = result.stdout.decode('gbk')
+            except (UnicodeDecodeError, LookupError):
+                text = result.stdout.decode('utf-8', errors='replace')
+
+        prices = {}
+        for line in text.strip().split('\n'):
+            parts = [p.strip() for p in line.split('|') if p.strip()]
+            # Actual format: Markdown table from westock-data quote
+            # Header: | code | market_type | ... | price | ... |
+            # Data:   | sh601166 | 1 | ... | 18.53 | ... |
+            # Columns: code(0), ..., price(5)
+            if len(parts) >= 6:
+                # Skip header/separator rows
+                if parts[0] == 'code' or '---' in parts[0]:
+                    continue
+                try:
+                    code = parts[0].strip()
+                    # If code has market prefix (sh/sz), strip it
+                    mkt_code = code[2:] if len(code) > 6 and code[:2] in ('sh', 'sz', 'bj') else code
+                    price = float(parts[5])
+                    prices[mkt_code] = price
+                except (ValueError, IndexError):
+                    continue
+        return prices
+    except subprocess.TimeoutExpired:
+        sys.stderr.write("[Paper] Live quote fetch timed out\n")
+        return {}
+    except Exception as e:
+        sys.stderr.write(f"[Paper] Live quote fetch error: {e}\n")
+        return {}
 
 
 # ── Core Functions ──────────────────────────────────────────────────────
@@ -106,7 +177,26 @@ def generate_suggestions() -> list:
             direction = pred.get('direction', 'neutral')
             confidence = pred.get('confidence', 0) or 0
             entry_zone = pred.get('entry_zone', 0) or 0
-            price = quotes.get(code, {}).get('price', entry_zone) or entry_zone
+            q = quotes.get(code)
+            price = q.get('price', entry_zone) if q else entry_zone
+
+            # ── Price validity check ──
+            # If price is zero, negative, or falls back to entry_zone
+            # (meaning quotes table has no real market data), skip this stock.
+            if price <= 0 or (q is None and price == entry_zone):
+                price = 0
+                action = 'hold'
+                qty = 0
+                reason = f"no valid market price"
+                suggestions.append({
+                    'date': TODAY, 'code': code, 'action': action, 'qty': qty,
+                    'price': price, 'confidence': confidence, 'direction': direction,
+                    'entry_zone': entry_zone, 'reason': reason,
+                    'signals_bullish': 0, 'signals_bearish': 0,
+                    'position_weight': 0,
+                    'pred_id': pred.get('id'),
+                })
+                continue
             position = positions.get(code)
             holding_qty = position['qty'] if position else 0
 
@@ -142,6 +232,11 @@ def generate_suggestions() -> list:
 
 def auto_execute():
     """Generate suggestions and auto-execute trades. Called by scheduler."""
+    # ── Market open check ──
+    if not is_market_open():
+        sys.stderr.write(f"[Paper] Market closed. Skipping auto-execute.\n")
+        return
+
     # Ensure tables exist
     init_backtest_tables()
     init_account()
@@ -180,6 +275,13 @@ def auto_execute():
         pos_codes = [sug['code'] for sug in suggestions]
         quotes = get_quotes_batch(db, list(set(pos_codes)))
 
+        # ── Fetch live prices for trade execution ──
+        trade_codes = [s['code'] for s in suggestions if s['action'] in ('buy', 'sell')]
+        live_prices = {}
+        if trade_codes:
+            live_prices = fetch_live_prices(trade_codes)
+            sys.stderr.write(f"[Paper] Live prices fetched for {len(live_prices)}/{len(trade_codes)} stocks\n")
+
         executed = 0
         for sug in suggestions:
             sug['executed'] = 0
@@ -209,6 +311,12 @@ def auto_execute():
                      sug.get('position_weight', 0), 0, sug.get('pred_id')]
                 )
 
+            # ── Override with live price if available ──
+            if sug['code'] in live_prices and live_prices[sug['code']] > 0:
+                live_price = live_prices[sug['code']]
+                sug['price'] = live_price
+                sys.stderr.write(f"  [Paper] Live price override {sug['code']}: ¥{live_price:.2f}\n")
+
             if sug['action'] == 'buy' and sug['qty'] >= LOT_SIZE:
                 qty = sug['qty']
                 price = sug['price']
@@ -236,8 +344,8 @@ def auto_execute():
                             [sug['code'], qty, round(price, 4), round(price, 4), round(qty * price, 2)]
                         )
                     db.execute(
-                        "UPDATE paper_suggestions SET executed=1 WHERE date=? AND code=?",
-                        [TODAY, sug['code']]
+                        "UPDATE paper_suggestions SET executed=1, price=?, qty=? WHERE date=? AND code=?",
+                        [round(price, 4), qty, TODAY, sug['code']]
                     )
                     executed += 1
                     sys.stderr.write(f"  BUY  {sug['code']} {qty}sh @ ¥{price:.2f} (cash: ¥{cash:,.0f})\n")
@@ -264,7 +372,7 @@ def auto_execute():
                         db.execute("UPDATE paper_positions SET qty=?, updated_at=datetime('now','localtime') WHERE code=?", [remaining, sug['code']])
                     else:
                         db.execute("DELETE FROM paper_positions WHERE code=?", [sug['code']])
-                    db.execute("UPDATE paper_suggestions SET executed=1 WHERE date=? AND code=?", [TODAY, sug['code']])
+                    db.execute("UPDATE paper_suggestions SET executed=1, price=?, qty=? WHERE date=? AND code=?", [round(price, 4), qty, TODAY, sug['code']])
                     executed += 1
                     sys.stderr.write(f"  SELL {sug['code']} {qty}sh @ ¥{price:.2f} pnl=¥{realized_pnl:,.0f} (cash: ¥{cash:,.0f})\n")
 

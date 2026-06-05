@@ -140,7 +140,30 @@ function drawChart() {
     },
     options: {
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { position: 'top' } },
+      interaction: { intersect: false, mode: 'index' },
+      plugins: {
+        legend: { position: 'top' },
+        tooltip: {
+          backgroundColor: 'rgba(0,0,0,0.8)',
+          titleColor: '#fff',
+          bodyColor: '#fff',
+          padding: 10,
+          cornerRadius: 6,
+          callbacks: {
+            title: items => {
+              const i = items[0]?.dataIndex
+              return labels[i] || ''
+            },
+            label: ctx => {
+              const v = ctx.raw
+              const init = data[0]?.value || 1
+              const pct = ((v - init) / init * 100)
+              const sign = pct >= 0 ? '+' : ''
+              return `${ctx.dataset.label}: ¥${(v/10000).toFixed(2)}万 (${sign}${pct.toFixed(1)}%)`
+            },
+          },
+        },
+      },
       scales: {
         y: { ticks: { callback: v => '¥' + (v/10000).toFixed(1) + '万' } },
       },

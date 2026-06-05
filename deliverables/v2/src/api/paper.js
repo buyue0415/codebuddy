@@ -39,9 +39,12 @@ export async function fetchPaperPositions() {
   return apiCall('GET', '/api/v2/paper/positions')
 }
 
-export async function fetchPaperSuggestions(code = '') {
-  const qs = code ? `?code=${code}` : ''
-  return apiCall('GET', `/api/v2/paper/suggestions${qs}`)
+export async function fetchPaperSuggestions(code = '', date = '') {
+  const params = new URLSearchParams()
+  if (code) params.set('code', code)
+  if (date) params.set('date', date)
+  const qs = params.toString()
+  return apiCall('GET', `/api/v2/paper/suggestions${qs ? '?' + qs : ''}`)
 }
 
 export async function fetchPaperTrades(code = '', limit = 50, offset = 0) {
@@ -58,4 +61,11 @@ export async function fetchPaperPerformance(days = 90) {
 
 export async function resetPaperAccount(initialCapital = 100000) {
   return apiCall('POST', '/api/v2/paper/reset', { initial_capital: initialCapital })
+}
+
+// ── Intraday Quotes ──
+
+export async function fetchIntraday(code, date = '') {
+  const params = date ? `?date=${date}` : ''
+  return apiCall('GET', `/api/v2/paper/intraday/${code}${params}`)
 }

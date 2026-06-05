@@ -1546,6 +1546,7 @@ from db_helper import (
     insert_backtest_run, update_backtest_run, get_paper_account,
     get_paper_positions, get_paper_trades, get_paper_suggestions,
     get_paper_daily_snapshots, reset_paper_account,
+    get_intraday_quotes, get_intraday_dates_for_code,
 )
 
 # V0.9 TODAY import (fallback to datetime if signals not loaded)
@@ -1553,6 +1554,13 @@ try:
     from signals import TODAY
 except ImportError:
     TODAY = datetime.now().strftime("%Y-%m-%d")
+
+# Market utils
+try:
+    from market_utils import is_market_open, get_market_status
+except ImportError:
+    def is_market_open(): return True
+    def get_market_status(): return 'open'
 
 
 @app.post("/api/v2/backtest/run")
@@ -1766,8 +1774,9 @@ def api_paper_account():
             return api_response(data={'initialized': False, 'message': '虚拟账户未初始化'})
         # Compute position value from LIVE quotes (consistent with get_paper_positions display)
         db = get_db()
-        agg = db.execute("""
-            SELECT COALESCE(SUM(pp.qty * COALESCE(q.price, pp.last_price, pp.avg_cost)), 0) as pos_val
+        _kd = "(SELECT close FROM kline_daily WHERE code=pp.code ORDER BY date DESC LIMIT 1)"
+        agg = db.execute(f"""
+            SELECT COALESCE(SUM(pp.qty * COALESCE(q.price, {_kd}, pp.last_price, pp.avg_cost)), 0) as pos_val
             FROM paper_positions pp
             LEFT JOIN quotes q ON pp.code = q.code
             WHERE pp.qty > 0
@@ -1803,37 +1812,73 @@ def api_paper_trades(code: str = Query(default=''), limit: int = Query(default=5
 
 
 @app.get("/api/v2/paper/suggestions")
-def api_paper_suggestions(code: str = Query(default='')):
-    suggestions = get_paper_suggestions(date=TODAY, code=code if code else None)
+def api_paper_suggestions(code: str = Query(default=''), date: str = Query(default=None)):
+    if date is None:
+        date = TODAY
+    _market_status = get_market_status()
+    suggestions = get_paper_suggestions(date=date, code=code if code else None)
 
-    # Generate fresh suggestions if none exist for today
-    if not suggestions:
-        try:
-            from paper_trading import generate_suggestions as _gen_sug
-            fresh = _gen_sug()
-            if fresh:
-                from db_helper import upsert_paper_suggestion
-                for sug in fresh:
-                    upsert_paper_suggestion(sug)
-                suggestions = get_paper_suggestions(date=TODAY, code=code if code else None)
-        except Exception:
-            pass
+    # Only generate fresh & auto-execute for TODAY (not historical dates)
+    is_today = (date == TODAY)
+    if is_today:
+        # Generate fresh suggestions if none exist for today
+        if not suggestions:
+            try:
+                from paper_trading import generate_suggestions as _gen_sug
+                fresh = _gen_sug()
+                if fresh:
+                    from db_helper import upsert_paper_suggestion
+                    for sug in fresh:
+                        upsert_paper_suggestion(sug)
+                    suggestions = get_paper_suggestions(date=date, code=code if code else None)
+            except Exception:
+                pass
 
-    # Auto-execute any UNEXECUTED suggestions (idempotent — only once per day)
-    unexecuted = [s for s in (suggestions or []) if s.get('executed') != 1]
-    if unexecuted:
-        try:
+        # Auto-execute any UNEXECUTED suggestions only when market is open
+        unexecuted = [s for s in (suggestions or []) if s.get('executed') != 1]
+        if unexecuted and is_market_open():
+            try:
+                import sys as _sys
+                _sys.stderr.write(f"[Paper API] Found {len(unexecuted)} unexecuted suggestions, calling auto_execute...\n")
+                from paper_trading import auto_execute as _auto_exec
+                _auto_exec()
+                suggestions = get_paper_suggestions(date=date, code=code if code else None)
+            except Exception as _e:
+                import traceback as _tb
+                _sys.stderr.write(f"[Paper API] auto_execute ERROR: {_e}\n{_tb.format_exc()}\n")
+        elif unexecuted:
             import sys as _sys
-            _sys.stderr.write(f"[Paper API] Found {len(unexecuted)} unexecuted suggestions, calling auto_execute...\n")
-            from paper_trading import auto_execute as _auto_exec
-            _auto_exec()
-            suggestions = get_paper_suggestions(date=TODAY, code=code if code else None)
-        except Exception as _e:
-            import traceback as _tb
-            _sys.stderr.write(f"[Paper API] auto_execute ERROR: {_e}\n{_tb.format_exc()}\n")
+            _sys.stderr.write(f"[Paper API] {len(unexecuted)} unexecuted suggestions but market is {_market_status}. Skipping.\n")
 
-    return api_response(data=suggestions, count=len(suggestions), generated_at=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
-    return api_response(data=suggestions, count=len(suggestions), generated_at=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+    return api_response(
+        data=suggestions, count=len(suggestions),
+        market_status=_market_status,
+        generated_at=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+    )
+
+
+@app.get("/api/v2/paper/intraday/{code}")
+def api_intraday_quotes(code: str, date: str = Query(default=None)):
+    """Get intraday minute-level quotes for a stock on a given date.
+    
+    Args:
+        code: Stock code (e.g. '601166')
+        date: Date string 'YYYY-MM-DD'. Defaults to today.
+    """
+    try:
+        if date is None:
+            date = datetime.now().strftime('%Y-%m-%d')
+        data = get_intraday_quotes(code, date)
+        available_dates = get_intraday_dates_for_code(code)
+        return api_response(data={
+            'code': code,
+            'date': date,
+            'data': data,
+            'count': len(data),
+            'available_dates': available_dates,
+        })
+    except Exception as e:
+        return api_response(success=False, error=str(e), status_code=500)
 
 
 @app.post("/api/v2/paper/reset")

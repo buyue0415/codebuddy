@@ -74,48 +74,64 @@
       <!-- Per-Stock Breakdown -->
       <div v-if="stockResults.length" class="card" style="margin-bottom:20px">
         <h2>📊 各股票回测明细</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>股票</th>
-              <th>夏普比率</th>
-              <th>最大回撤</th>
-              <th>胜率</th>
-              <th>年化收益</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in stockResults" :key="row.code">
-              <td><b>{{ row.name }}</b><span class="code-hint">{{ row.code }}</span></td>
-              <td :class="row.sharpe >= 0 ? 'up' : 'down'">{{ fmtNum(row.sharpe) }}</td>
-              <td class="down">{{ fmtPct(row.max_drawdown) }}</td>
-              <td>{{ fmtPct(row.win_rate) }}</td>
-              <td :class="row.annual_return >= 0 ? 'up' : 'down'">{{ fmtPct(row.annual_return) }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>股票</th>
+                <th>夏普比率</th>
+                <th>最大回撤</th>
+                <th>胜率</th>
+                <th>年化收益</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in stockResults" :key="row.code">
+                <td><b>{{ row.name }}</b><span class="code-hint">{{ row.code }}</span></td>
+                <td :class="row.sharpe >= 0 ? 'up' : 'down'">{{ fmtNum(row.sharpe) }}</td>
+                <td class="down">{{ fmtPct(row.max_drawdown) }}</td>
+                <td>{{ fmtPct(row.win_rate) }}</td>
+                <td :class="row.annual_return >= 0 ? 'up' : 'down'">{{ fmtPct(row.annual_return) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <!-- History -->
       <div class="card">
         <h2>📜 回测运行历史 <span class="hint">（点击行查看明细）</span></h2>
-        <table v-if="history.length">
-          <thead><tr><th>时间</th><th>状态</th><th>训练</th><th>测试</th><th>股票</th><th>夏普</th><th>最大回撤</th><th>胜率</th><th>年化</th></tr></thead>
-          <tbody>
-            <tr v-for="h in history" :key="h.id" style="cursor:pointer" @click="viewResult(h.id)"
-              :class="{ 'row-selected': h.id === results?.run_id }">
-              <td>{{ (h.started_at || '').slice(0,16) }}</td>
-              <td><span :class="statusClass(h)">{{ statusText(h) }}</span></td>
-              <td>{{ h.train_window }}天</td>
-              <td>{{ h.test_window }}天</td>
-              <td>{{ h.total_stocks }}</td>
-              <td :class="tryParseField(h.summary_json, 'sharpe') >= 0 ? 'up' : 'down'">{{ fmtNum(tryParseField(h.summary_json, 'sharpe')) }}</td>
-              <td class="down">{{ fmtPct(tryParseField(h.summary_json, 'max_drawdown')) }}</td>
-              <td>{{ fmtPct(tryParseField(h.summary_json, 'win_rate')) }}</td>
-              <td :class="tryParseField(h.summary_json, 'annual_return') >= 0 ? 'up' : 'down'">{{ fmtPct(tryParseField(h.summary_json, 'annual_return')) }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <div class="table-scroll history-scroll" v-if="history.length">
+          <table>
+            <thead><tr><th>时间</th><th>状态</th><th>训练</th><th>测试</th><th>股票</th><th>夏普</th><th>最大回撤</th><th>胜率</th><th>年化</th></tr></thead>
+            <tbody>
+              <tr v-for="(h, idx) in history" :key="h.id" style="cursor:pointer" @click="viewResult(h.id)"
+                :class="{ 'row-selected': h.id === results?.run_id }">
+                <td>{{ (h.started_at || '').slice(0,16) }}</td>
+                <td><span :class="statusClass(h)">{{ statusText(h) }}</span></td>
+                <td>{{ h.train_window }}天</td>
+                <td>{{ h.test_window }}天</td>
+                <td>{{ h.total_stocks }}</td>
+                <td :class="tryParseField(h.summary_json, 'sharpe') >= 0 ? 'up' : 'down'">
+                  {{ fmtNum(tryParseField(h.summary_json, 'sharpe')) }}
+                  <span v-html="trendArrow(tryParseField(h.summary_json, 'sharpe'), tryParseField(history[idx+1]?.summary_json, 'sharpe'))"></span>
+                </td>
+                <td class="down">
+                  {{ fmtPct(tryParseField(h.summary_json, 'max_drawdown')) }}
+                  <span v-html="trendArrow(tryParseField(h.summary_json, 'max_drawdown'), tryParseField(history[idx+1]?.summary_json, 'max_drawdown'), true)"></span>
+                </td>
+                <td>
+                  {{ fmtPct(tryParseField(h.summary_json, 'win_rate')) }}
+                  <span v-html="trendArrow(tryParseField(h.summary_json, 'win_rate'), tryParseField(history[idx+1]?.summary_json, 'win_rate'))"></span>
+                </td>
+                <td :class="tryParseField(h.summary_json, 'annual_return') >= 0 ? 'up' : 'down'">
+                  {{ fmtPct(tryParseField(h.summary_json, 'annual_return')) }}
+                  <span v-html="trendArrow(tryParseField(h.summary_json, 'annual_return'), tryParseField(history[idx+1]?.summary_json, 'annual_return'))"></span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
         <div v-else class="empty">暂无回测记录，请先运行回测</div>
       </div>
     </template>
@@ -305,6 +321,18 @@ function statusText(h) {
   if (msg && msg.includes('服务重启')) return '⚠ 服务中断'
   return '✗ 失败'
 }
+function trendArrow(v, prev, invert = false) {
+  if (v == null || prev == null || prev === 0) return ''
+  const diff = v - prev
+  const abs = Math.abs(diff)
+  const fmt = abs >= 1 ? abs.toFixed(1) : abs.toFixed(2)
+  if (diff === 0) return '<span class="trend flat">→</span>'
+  const isUp = invert ? diff < 0 : diff > 0
+  const cls = isUp ? 'up' : 'down'
+  const arrow = isUp ? '↑' : '↓'
+  return `<span class="trend ${cls}">${arrow} ${fmt}</span>`
+}
+
 function tryParseField(s, key) {
   // Extract aggregate metric from summary_json.
   // Key map: sharpe→avg_sharpe, max_drawdown→avg_max_drawdown, etc.
@@ -336,4 +364,14 @@ function tryParseField(s, key) {
 .stat-val { font-size: 28px; font-weight: 700; color: #1e293b; }
 .row-selected { background: #eff6ff; }
 .code-hint { font-size: 11px; color: #9ca3af; margin-left: 6px; font-weight: 400; }
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.table-scroll table { min-width: 720px; }
+.table-scroll th, .table-scroll td { white-space: nowrap; padding: 8px 10px; }
+.history-scroll { max-height: 400px; overflow-y: auto; }
+.history-scroll::-webkit-scrollbar { width: 6px; }
+.history-scroll::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+.trend { margin-left: 4px; font-size: 11px; font-weight: 600; }
+.trend.up { color: #16a34a; }
+.trend.down { color: #dc2626; }
+.trend.flat { color: #9ca3af; }
 </style>

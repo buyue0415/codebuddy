@@ -267,6 +267,9 @@ if(!timelineItems.length){
    }
   }else if(isToday){
    statusText='预测中';
+  }else if(!isFuture){
+   // Past date without verification: stale, needs backfill
+   statusCls='stale'; statusText='待回填';
   }
 
   // Direction
