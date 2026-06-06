@@ -42,6 +42,11 @@ const routes = [
     component: () => import('@/pages/Kline.vue'),
   },
   {
+    path: '/pattern-rules',
+    name: 'pattern-rules',
+    component: () => import('@/pages/PatternRules.vue'),
+  },
+  {
     path: '/manage',
     name: 'manage',
     component: () => import('@/pages/Management.vue'),

@@ -61,7 +61,9 @@ try:
         get_all_kline_daily, get_all_kline_monthly,
         get_all_predictions, get_all_seasonal, get_all_accuracy_stats,
         get_all_monthly_changes, get_all_learning_params,
-        get_dividend_yield_series)
+        get_dividend_yield_series,
+        init_pattern_rules_tables, get_pattern_rules, get_pattern_rule,
+        insert_pattern_rule, update_pattern_rule, delete_pattern_rule)
     DB_AVAILABLE = True
 except ImportError:
     DB_AVAILABLE = False
@@ -493,12 +495,20 @@ app = FastAPI(
 
 @app.on_event("startup")
 async def startup_init_tables():
-    """Initialize paper-trading tables and clean stale backtest records once at server startup. Idempotent."""
+    """Initialize paper-trading tables, pattern rules tables, and clean stale backtest records. Idempotent."""
     try:
         init_backtest_tables()
         _write("  [Startup] Paper-trading tables initialized\n")
+    except Exception as e:
+        _write(f"  [Startup] WARNING: init_backtest_tables failed: {e}\n")
 
-        # Clean up stale "running" records from previous server run
+    try:
+        init_pattern_rules_tables()
+        _write("  [Startup] Pattern rules table initialized\n")
+    except Exception as e:
+        _write(f"  [Startup] WARNING: init_pattern_rules_tables failed: {e}\n")
+
+    # Clean up stale "running" records from previous server run
         try:
             db = get_db()
             stale = db.execute(
@@ -1961,6 +1971,137 @@ def api_paper_performance(days: int = Query(default=90)):
         'total_trades': total_trades,  # total transactions (buy + sell)
         'max_single_win': max_single_win,
     })
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# K-line Pattern Rules API
+# ──────────────────────────────────────────────────────────────────────────
+
+@app.get("/api/v2/pattern-rules")
+def api_pattern_rules_list(enabled: str = Query(default="")):
+    """Get all pattern rules, optionally only enabled ones."""
+    try:
+        if enabled == '1':
+            data = get_pattern_rules(enabled_only=True)
+        else:
+            data = get_pattern_rules()
+        return api_response(data=data, count=len(data))
+    except Exception as e:
+        return api_response(success=False, error=str(e), status_code=500)
+
+
+@app.get("/api/v2/pattern-rules/{rule_id}")
+def api_pattern_rule_get(rule_id: str):
+    """Get a single pattern rule by rule_id."""
+    try:
+        data = get_pattern_rule(rule_id)
+        if not data:
+            return api_response(success=False, error=f"规则 {rule_id} 不存在", status_code=404)
+        return api_response(data=data)
+    except Exception as e:
+        return api_response(success=False, error=str(e), status_code=500)
+
+
+@app.post("/api/v2/pattern-rules")
+async def api_pattern_rule_create(request: Request):
+    """Create a new pattern rule."""
+    try:
+        body = await request.json()
+        rid = body.get('rule_id', '').strip()
+        if not rid:
+            return api_response(success=False, error="rule_id 不能为空", status_code=400)
+        existing = get_pattern_rule(rid)
+        if existing:
+            return api_response(success=False, error=f"规则 {rid} 已存在", status_code=409)
+        insert_pattern_rule(body)
+        return api_response(message=f"规则 {rid} 已创建", data=get_pattern_rule(rid))
+    except Exception as e:
+        return api_response(success=False, error=str(e), status_code=500)
+
+
+@app.put("/api/v2/pattern-rules/{rule_id}")
+async def api_pattern_rule_update(rule_id: str, request: Request):
+    """Update an existing pattern rule."""
+    try:
+        body = await request.json()
+        existing = get_pattern_rule(rule_id)
+        if not existing:
+            return api_response(success=False, error=f"规则 {rule_id} 不存在", status_code=404)
+        ok = update_pattern_rule(rule_id, body)
+        if ok:
+            return api_response(message=f"规则 {rule_id} 已更新", data=get_pattern_rule(rule_id))
+        return api_response(message="无需更新")
+    except Exception as e:
+        return api_response(success=False, error=str(e), status_code=500)
+
+
+@app.delete("/api/v2/pattern-rules/{rule_id}")
+def api_pattern_rule_delete(rule_id: str):
+    """Delete a pattern rule."""
+    try:
+        ok = delete_pattern_rule(rule_id)
+        if not ok:
+            return api_response(success=False, error=f"规则 {rule_id} 不存在", status_code=404)
+        return api_response(message=f"规则 {rule_id} 已删除")
+    except Exception as e:
+        return api_response(success=False, error=str(e), status_code=500)
+
+
+@app.post("/api/v2/pattern-rules/init")
+def api_pattern_rules_init():
+    """Initialize 33 default pattern rules (idempotent)."""
+    try:
+        import subprocess, sys as _sys
+        python = _sys.executable or r"C:\Users\28312\AppData\Local\Programs\Python\Python312\python.exe"
+        script = os.path.join(ROOT, "scripts", "init_pattern_rules.py")
+        result = subprocess.run([python, script], cwd=ROOT, capture_output=True, text=True, timeout=30)
+        output = result.stdout[-2000:] if result.stdout else ""
+        if result.stderr:
+            output += "\n[ERR] " + result.stderr[-1000:]
+        return api_response(
+            success=result.returncode == 0,
+            message="规则初始化完成" if result.returncode == 0 else "初始化失败",
+            output=output
+        )
+    except Exception as e:
+        return api_response(success=False, error=str(e), status_code=500)
+
+
+@app.get("/api/v2/pattern-scan/{code}")
+def api_pattern_scan(code: str):
+    """Scan daily kline for pattern matches."""
+    try:
+        kdata = get_kline_daily(code)
+        if not kdata:
+            return api_response(data={'patterns': [], 'summary': {
+                'bullish': {'count': 0, 'max_strength': 0},
+                'bearish': {'count': 0, 'max_strength': 0},
+                'neutral': {'count': 0}, 'total': 0
+            }})
+        # kdata from db_helper is newest-first [(date,open,close,high,low), ...]
+        from pattern_engine import scan_patterns
+        result = scan_patterns(kdata, code=code)
+        # 转换结果为前端友好格式
+        patterns = result.get('patterns', [])
+        frontend_result = {
+            'bullish': [{'rule_id': p['rule_id'], 'name': p['name'],
+                         'idx': p['idx'], 'price': p['price'],
+                         'date': p['date'], 'strength': p['strength'], 'direction': p['direction']}
+                        for p in patterns if p['direction'] == 'bullish'],
+            'bearish': [{'rule_id': p['rule_id'], 'name': p['name'],
+                         'idx': p['idx'], 'price': p['price'],
+                         'date': p['date'], 'strength': p['strength'], 'direction': p['direction']}
+                        for p in patterns if p['direction'] == 'bearish'],
+            'neutral': [{'rule_id': p['rule_id'], 'name': p['name'],
+                         'idx': p['idx'], 'price': p['price'],
+                         'date': p['date'], 'strength': p['strength']}
+                        for p in patterns if p['direction'] == 'neutral'],
+            'summary': result.get('summary', {}),
+            'code': code,
+        }
+        return api_response(data=frontend_result)
+    except Exception as e:
+        return api_response(success=False, error=str(e), status_code=500)
 
 
 # ─── Main entry point ────────────────────────────────────────────────────────

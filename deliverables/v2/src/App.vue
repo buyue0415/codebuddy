@@ -54,6 +54,7 @@ const navGroups = [
   { id: 'info',     label: '股票信息收集', items: [
     { route: '/news', label: '新闻动态' },
     { route: '/kline', label: 'K线走势' },
+    { route: '/pattern-rules', label: '形态规则' },
   ]},
   { id: 'paper',    label: '模拟交易', items: [
     { route: '/backtest', label: '回测分析' },
@@ -65,7 +66,7 @@ const navGroups = [
 const routeGroupMap = {
   '/overview': 'trade', '/trades': 'trade', '/fees': 'trade', '/manage': 'trade',
   '/intelligence': 'analysis', '/expert': 'analysis',
-  '/news': 'info', '/kline': 'info',
+  '/news': 'info', '/kline': 'info', '/pattern-rules': 'info',
   '/backtest': 'paper', '/paper': 'paper', '/paper/history': 'paper',
 }
 

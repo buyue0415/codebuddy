@@ -1614,3 +1614,120 @@ def get_intraday_dates_for_code(code: str, limit: int = 90) -> list:
         return [r['d'] for r in rows]
     finally:
         db.close()
+
+
+# ── K-line Pattern Rules ──────────────────────────────────────────────
+
+def init_pattern_rules_tables():
+    """Initialize pattern_rules table. Idempotent."""
+    db = get_db()
+    try:
+        db.executescript("""
+            CREATE TABLE IF NOT EXISTS pattern_rules (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                rule_id     TEXT    NOT NULL UNIQUE,
+                name        TEXT    NOT NULL,
+                name_en     TEXT    DEFAULT '',
+                category    TEXT    NOT NULL CHECK(category IN ('single','double','triple','multi','special')),
+                direction   TEXT    NOT NULL CHECK(direction IN ('bullish','bearish','neutral')),
+                strength    INTEGER NOT NULL DEFAULT 3,
+                span_days   INTEGER NOT NULL,
+                conditions  TEXT    NOT NULL,
+                enabled     INTEGER NOT NULL DEFAULT 1,
+                memo        TEXT    DEFAULT '',
+                created_at  TEXT    DEFAULT (datetime('now','localtime')),
+                updated_at  TEXT    DEFAULT (datetime('now','localtime'))
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_pr_rule_id ON pattern_rules(rule_id);
+            CREATE INDEX IF NOT EXISTS idx_pr_category ON pattern_rules(category);
+            CREATE INDEX IF NOT EXISTS idx_pr_enabled ON pattern_rules(enabled);
+        """)
+        db.commit()
+    finally:
+        db.close()
+
+
+def get_pattern_rules(enabled_only=False) -> list:
+    """Get all pattern rules, optionally only enabled ones."""
+    db = get_db()
+    try:
+        sql = "SELECT * FROM pattern_rules"
+        if enabled_only:
+            sql += " WHERE enabled=1"
+        sql += " ORDER BY category, rule_id"
+        return [dict(r) for r in db.execute(sql).fetchall()]
+    finally:
+        db.close()
+
+
+def get_pattern_rule(rule_id: str) -> dict | None:
+    """Get a single pattern rule by rule_id."""
+    db = get_db()
+    try:
+        r = db.execute("SELECT * FROM pattern_rules WHERE rule_id=?", [rule_id]).fetchone()
+        return dict(r) if r else None
+    finally:
+        db.close()
+
+
+def insert_pattern_rule(rule: dict) -> int:
+    """Insert a new pattern rule. Returns the new row id."""
+    db = get_db()
+    try:
+        cur = db.execute(
+            "INSERT INTO pattern_rules (rule_id, name, name_en, category, direction, "
+            "strength, span_days, conditions, enabled, memo) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [rule['rule_id'], rule['name'], rule.get('name_en', ''),
+             rule['category'], rule['direction'], rule['strength'],
+             rule['span_days'], rule['conditions'], rule.get('enabled', 1),
+             rule.get('memo', '')]
+        )
+        db.commit()
+        return cur.lastrowid
+    finally:
+        db.close()
+
+
+def update_pattern_rule(rule_id: str, updates: dict) -> bool:
+    """Update a pattern rule. Returns True if any rows affected."""
+    allowed = {'name', 'name_en', 'category', 'direction', 'strength',
+               'span_days', 'conditions', 'enabled', 'memo'}
+    sets = {}
+    for k, v in updates.items():
+        if k in allowed:
+            sets[k] = v
+    if not sets:
+        return False
+    sets['updated_at'] = 'datetime(\'now\',\'localtime\')'
+    db = get_db()
+    try:
+        placeholders = ', '.join(f"{k}=?" for k in sets if k != 'updated_at')
+        placeholders += ", updated_at=datetime('now','localtime')"
+        values = [sets[k] for k in sets if k != 'updated_at']
+        values.append(rule_id)
+        db.execute(f"UPDATE pattern_rules SET {placeholders} WHERE rule_id=?", values)
+        db.commit()
+        return db.total_changes > 0
+    finally:
+        db.close()
+
+
+def delete_pattern_rule(rule_id: str) -> bool:
+    """Delete a pattern rule by rule_id."""
+    db = get_db()
+    try:
+        db.execute("DELETE FROM pattern_rules WHERE rule_id=?", [rule_id])
+        db.commit()
+        return db.total_changes > 0
+    finally:
+        db.close()
+
+
+def count_pattern_rules() -> int:
+    """Count total pattern rules."""
+    db = get_db()
+    try:
+        return db.execute("SELECT COUNT(*) as c FROM pattern_rules").fetchone()['c']
+    finally:
+        db.close()

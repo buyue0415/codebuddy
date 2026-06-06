@@ -45,5 +45,7 @@ venv/
 console.log*
 kline_bar_exists
 miaoxiang/
-'
-3
+
+# Vite cache & temp
+**/node_modules/.vite/deps_temp_*
+**/node_modules/.vite/deps/

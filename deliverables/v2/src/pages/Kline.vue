@@ -63,9 +63,10 @@ const sliderStartDate = ref(null)
 const sliderEndDate = ref(null)
 
 let klineChart = null, dyChart = null, monthlyChart = null, seasonalChart = null
-let klineBars = [], klineLabels = [], crossX = null
+let klineBars = [], klineLabels = [], crossX = -1, crossIdx = -1
 let klineTT = null, dyTT = null
 let zoomState = null
+let patternScanResult = null
 
 const stockName = computed(() => data.watchlist.find(s => s.code === activeCode.value)?.name || activeCode.value)
 
@@ -109,11 +110,10 @@ function renderAll() {
   const sma60 = calcSMA(closes, 60)
   klineLabels = labels
 
-  // Candle data for candlestick chart (pre-computed colors)
+  // Candle data for candlestick chart
   const candleData = kline.map((k, i) => {
     const o = k[1], c = k.length === 5 ? k[2] : k[4], h = k.length === 5 ? k[3] : k[2], l = k.length === 5 ? k[4] : k[3]
-    const up = c >= o
-    return { x: i, o, h, l, c, backgroundColor: up ? 'rgba(239,68,68,0.5)' : 'rgba(22,163,74,0.5)', borderColor: up ? '#ef4444' : '#16a34a' }
+    return { x: i, o, h, l, c }
   })
   const sma20Line = sma20.map((v, i) => ({ x: i, y: v }))
   const sma60Line = sma60.map((v, i) => ({ x: i, y: v }))
@@ -136,15 +136,95 @@ function renderAll() {
   const Chart = window.Chart
   if (!Chart) return
 
+  // Set candlestick colors via prototype defaults: 涨=红 #ef4444 跌=绿 #16a34a
+  try {
+    const elem = Chart.registry.getElement('candlestick')
+    if (elem && elem.prototype && elem.prototype.draw) {
+      const origDraw = elem.prototype.draw
+      elem.prototype.draw = function(ctx) {
+        try {
+          if (typeof this.o === 'number' && typeof this.c === 'number') {
+            this.options.borderColor = this.c >= this.o ? '#ef4444' : '#16a34a'
+            this.options.backgroundColor = this.c >= this.o ? '#ef4444' : '#16a34a'
+          }
+        } catch (_) {}
+        return origDraw.call(this, ctx)
+      }
+    }
+  } catch (e) { /* ignore */ }
+
+  // ---- X-axis date label helper (shared between kline & dy chart) ----
+  function drawXDateLabel(ctx, ca, xPos, dateStr) {
+    if (!dateStr || !ctx || !ca) return
+    ctx.save()
+    ctx.font = '11px -apple-system,PingFang SC,Microsoft YaHei,sans-serif'
+    const tw = ctx.measureText(dateStr).width
+    const pad = 5, r = 4
+    const lw = tw + pad * 2, lh = 18
+    let lx = xPos - lw / 2
+    lx = Math.max(ca.left + 2, Math.min(ca.right - lw - 2, lx))
+    const ly = ca.bottom + 10
+    ctx.fillStyle = 'rgba(30,30,60,0.8)'
+    ctx.beginPath(); ctx.roundRect(lx, ly, lw, lh, r); ctx.fill()
+    ctx.fillStyle = '#93c5fd'
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+    ctx.fillText(dateStr, lx + lw / 2, ly + lh / 2)
+    ctx.restore()
+  }
+
   const crossPlugin = {
     id: 'klineCross',
     afterDraw: function(chart) {
-      if (!crossX) return
-      const ctx = chart.ctx, ra = chart.scales.y
-      ctx.save(); ctx.setLineDash([4, 3])
-      ctx.strokeStyle = 'rgba(100,100,255,.35)'; ctx.lineWidth = 1
-      ctx.beginPath(); ctx.moveTo(crossX, ra.top); ctx.lineTo(crossX, ra.bottom)
-      ctx.stroke(); ctx.restore()
+      try {
+        const ctx = chart.ctx
+        if (crossX >= 0) {
+          const ra = chart.scales.y
+          ctx.save(); ctx.setLineDash([4, 3])
+          ctx.strokeStyle = 'rgba(100,100,255,.35)'; ctx.lineWidth = 1
+          ctx.beginPath(); ctx.moveTo(crossX, ra.top); ctx.lineTo(crossX, ra.bottom)
+          ctx.stroke(); ctx.restore()
+        }
+        // Pattern markers strip (inside chartArea, above X-axis labels)
+        if (patternScanResult && chart.scales && chart.scales.x && chart.chartArea) {
+          const xs = chart.scales.x; const ca = chart.chartArea
+          const s = zoomState ? zoomState.start : 0; const e = zoomState ? zoomState.end : 0
+          if (s == null) return
+          const stripTop = ca.bottom - 14
+          const byIdx = {}
+          ;(patternScanResult.bullish || []).forEach(function(p) {
+            if (!byIdx[p.idx]) byIdx[p.idx] = {}; byIdx[p.idx].bullish = (byIdx[p.idx].bullish||0) + 1
+          })
+          ;(patternScanResult.bearish || []).forEach(function(p) {
+            if (!byIdx[p.idx]) byIdx[p.idx] = {}; byIdx[p.idx].bearish = (byIdx[p.idx].bearish||0) + 1
+          })
+          ctx.save()
+          ctx.fillStyle = 'rgba(248,250,252,0.85)'; ctx.fillRect(ca.left, stripTop, ca.right - ca.left, 14)
+          ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 0.5; ctx.strokeRect(ca.left, stripTop, ca.right - ca.left, 14)
+          for (let gi = s; gi < e; gi++) {
+            const info = byIdx[gi]
+            if (!info) continue
+            const px = xs.getPixelForValue(gi - s)
+            const r = 3
+            if (info.bullish && info.bearish) {
+              ctx.beginPath(); ctx.arc(px, stripTop + 7, r, 0, Math.PI * 2); ctx.fillStyle = '#f59e0b'; ctx.fill()
+              ctx.beginPath(); ctx.arc(px + 1, stripTop + 6, r * 0.4, 0, Math.PI * 2); ctx.fillStyle = '#8b5cf6'; ctx.fill()
+            } else if (info.bullish) {
+              ctx.beginPath(); ctx.arc(px, stripTop + 7, r, 0, Math.PI * 2); ctx.fillStyle = '#f59e0b'; ctx.fill()
+            } else if (info.bearish) {
+              ctx.beginPath(); ctx.arc(px, stripTop + 7, r, 0, Math.PI * 2); ctx.fillStyle = '#8b5cf6'; ctx.fill()
+            }
+          }
+          ctx.restore()
+        }
+        // X-axis date label on hover
+        if (crossX >= 0 && crossIdx >= 0 && chart.chartArea) {
+          const ca = chart.chartArea
+          ctx.save(); ctx.strokeStyle = 'rgba(100,100,255,.7)'; ctx.lineWidth = 2.5
+          ctx.beginPath(); ctx.moveTo(crossX, ca.bottom); ctx.lineTo(crossX, ca.bottom + 8)
+          ctx.stroke(); ctx.restore()
+          drawXDateLabel(ctx, ca, crossX, klineLabels[crossIdx])
+        }
+      } catch (_) { /* prevent errors from breaking chart render */ }
     },
   }
 
@@ -160,7 +240,7 @@ function renderAll() {
           type: 'candlestick',
           data: {
             datasets: [
-              { label: '日K线', data: candleData, backgroundColor: '#999', borderColor: '#666', borderWidth: 1 },
+              { label: '日K线', data: candleData },
               { label: 'SMA20', data: sma20Line, type: 'line', borderColor: '#f59e0b', borderWidth: 1, pointRadius: 0, borderDash: [4, 2], fill: false, order: 1 },
               { label: 'SMA60', data: sma60Line, type: 'line', borderColor: '#ef4444', borderWidth: 1, pointRadius: 0, borderDash: [6, 3], fill: false, order: 1 },
               ...(divScatter.length ? [{ label: '分红', data: divScatter, type: 'scatter', borderColor: '#dc2626', backgroundColor: '#dc2626', pointRadius: 8, pointStyle: 'triangle', showLine: false, order: 2 }] : []),
@@ -171,7 +251,7 @@ function renderAll() {
             animation: false,
             plugins: { legend: { position: 'top', labels: { usePointStyle: true, font: { size: 11 } } }, tooltip: { enabled: false } },
             scales: {
-              x: { type: 'linear', ticks: { callback: function(v) { return labels[Math.round(v)] || '' }, maxTicksLimit: 12, font: { size: 10 } } },
+              x: { type: 'linear', ticks: { callback: function(v) { return labels[Math.round(v)] || '' }, font: { size: 9 }, autoSkipPadding: 1 } },
               y: { ticks: { font: { size: 10 } } },
             },
           },
@@ -204,6 +284,13 @@ function renderAll() {
   const hasCandlestick = Chart.registry && typeof Chart.registry.getController === 'function' && !!Chart.registry.getController('candlestick')
   buildKlineChart(hasCandlestick ? 'candlestick' : 'line')
 
+  // ---- Pattern scan ----
+  apiCall('GET', '/api/v2/pattern-scan/' + code).then(resp => {
+    if (!resp?.success) return
+    patternScanResult = resp.data
+    if (klineChart) klineChart.draw()
+  })
+
   // ---- Monthly ----
   if (monthlyChart) monthlyChart.destroy()
   const mcSorted = mc.slice().reverse()
@@ -230,18 +317,19 @@ function renderAll() {
     const mx = e.clientX - rect.left, my = e.clientY - rect.top
     const xs = klineChart.scales.x, ys = klineChart.scales.y
     if (mx < xs.left || mx > xs.right || my < ys.top || my > ys.bottom) {
-      if (lastCrossIdx !== -1) { klineTT.style.display = 'none'; crossX = null; lastCrossIdx = -1; klineChart.draw(); if (dyChart) dyChart.draw() }
+      if (lastCrossIdx !== -1) { klineTT.style.display = 'none'; crossX = -1; crossIdx = -1; lastCrossIdx = -1; klineChart.draw(); if (dyChart) dyChart.draw() }
       return
     }
     const idx = Math.round(xs.getValueForPixel(mx)) + zoomState.start
     if (idx < 0 || idx >= klineBars.length) { klineTT.style.display = 'none'; return }
     if (idx === lastCrossIdx) return
     lastCrossIdx = idx
+    crossX = xs.getPixelForValue(idx - zoomState.start)
+    crossIdx = idx
     const bar = klineBars[idx]
     const prevBar = klineBars[idx > 0 ? idx - 1 : 0]
     const chg = prevBar ? ((bar.close - prevBar.close) / prevBar.close * 100) : 0
     const cls = chg >= 0 ? '#ef4444' : '#16a34a', sn = chg >= 0 ? '+' : ''
-    crossX = xs.getPixelForValue(idx - zoomState.start)
 
     let html = `<div style="font-weight:600;margin-bottom:4px;color:#93c5fd">${bar.date}</div>`
     html += `<div>开:<span>${fmt(bar.open)}</span></div>`
@@ -254,6 +342,20 @@ function renderAll() {
       html += `<div>到账: <span style="color:#34d399;font-weight:700">${fmt(bar.dividend.amount)}</span> 元</div>`
       html += `<div>每股分红: <span style="color:#60a5fa;font-weight:700">${fmt(bar.dividend.per_share || 0)}</span> 元</div></div>`
     }
+    // Show pattern info in tooltip
+    if (patternScanResult) {
+      const allP = (patternScanResult.bullish || []).concat(patternScanResult.bearish || [])
+      const hits = allP.filter(p => p.idx === idx)
+      if (hits.length) {
+        html += `<div style="margin-top:6px;border-top:1px solid #6b7280;padding-top:5px;">`
+        hits.forEach(p => {
+          const icon = p.direction === 'bullish' ? '🟡' : '🟣'
+          const nameColor = p.direction === 'bullish' ? '#f59e0b' : '#a78bfa'
+          html += `<div style="line-height:1.6">${icon} <span style="color:${nameColor}">${p.name}</span> <span style="font-size:10px;color:#9ca3af">${'★'.repeat(p.strength)}</span></div>`
+        })
+        html += `</div>`
+      }
+    }
     klineTT.innerHTML = html; klineTT.style.display = 'block'
     const bw = klineTT.offsetWidth || 130, bh = klineTT.offsetHeight || 120
     let left = mx + 16, top = my - bh / 2
@@ -263,7 +365,7 @@ function renderAll() {
     klineTT.style.left = left + 'px'; klineTT.style.top = top + 'px'
     klineChart.draw(); if (dyChart) dyChart.draw()
   }
-  kCanvas.onmouseleave = function() { klineTT.style.display = 'none'; if (dyTT) dyTT.style.display = 'none'; crossX = null; klineChart.draw(); if (dyChart) dyChart.draw() }
+  kCanvas.onmouseleave = function() { klineTT.style.display = 'none'; if (dyTT) dyTT.style.display = 'none'; crossX = -1; crossIdx = -1; klineChart.draw(); if (dyChart) dyChart.draw() }
 
   // ---- Zoom/Pan ----
   const totalBars = labels.length
@@ -275,19 +377,29 @@ function renderAll() {
       klineChart.data.datasets[0].data = candleData.slice(s, e).map((d, i) => ({ ...d, x: i }))
       klineChart.data.datasets[1].data = sma20.slice(s, e).map((v, i) => ({ x: i, y: v }))
       klineChart.data.datasets[2].data = sma60.slice(s, e).map((v, i) => ({ x: i, y: v }))
+      let dsIdx = 3
       if (klineChart.data.datasets[3]) {
         const divSlice = []
         for (let i = s; i < e; i++) { if (divLookup[labels[i]]) divSlice.push({ x: i - s, y: closes[i] }) }
         klineChart.data.datasets[3].data = divSlice
+        dsIdx = 4
       }
       klineChart.options.scales.x.ticks.callback = function(v) { return labels[Math.round(v) + s] || '' }
+
       klineChart.options.scales.x.min = -0.5
       klineChart.options.scales.x.max = e - s - 0.5
       klineChart.update('none')
     }
-    if (dyChart) { dyChart.options.scales.x.min = s; dyChart.options.scales.x.max = e - 1; dyChart.update('none') }
+    if (dyChart) {
+      dyChart.options.scales.x.min = s - 0.5
+      dyChart.options.scales.x.max = e - 0.5
+      dyChart.update('none')
+    }
   }
+
   applyZoom()
+
+  // Pattern markers drawn in crossPlugin.afterDraw (inside chartArea)
 
   kCanvas.onwheel = function(e) {
     e.preventDefault()
@@ -376,30 +488,57 @@ function renderAll() {
     const dyLabels = ds.labels || [], dySeries = ds.dy_series || [], dyEvents = ds.dividend_events || [], dyCloses = ds.close_prices || []
     const hasDivs = dyEvents.length > 0
 
-    const dyDivLookup = {}
-    dyEvents.forEach(e => { dyDivLookup[e.date] = e })
-    const dyEventPts = dyLabels.map((d, i) => dyDivLookup[d] && dySeries[i] != null ? dySeries[i] : null)
+    // Build dividend event points using ex_date
+    const dyExLookup = {}
+    dyEvents.forEach(e => { dyExLookup[e.ex_date] = e })
+    const dyEventPts = dyLabels.map((d, i) => {
+      const ev = dyExLookup[d]
+      if (!ev) return null
+      // Use dy value at this index, or search left/right for nearest
+      let val = dySeries[i]
+      if (val == null) {
+        for (let l = i - 1; l >= 0; l--) { if (dySeries[l] != null) { val = dySeries[l]; break } }
+      }
+      if (val == null) {
+        for (let r = i + 1; r < dySeries.length; r++) { if (dySeries[r] != null) { val = dySeries[r]; break } }
+      }
+      return val
+    })
+
+    // Convert dy data to global-index-based x values for linear axis alignment with kline chart
+    const dyDataPts = dySeries.map((v, i) => ({ x: i, y: v }))
+    const dyDivScatter = dyEvents
+      .map(e => {
+        const xi = dyLabels.indexOf(e.ex_date || e.date)
+        if (xi < 0) return null
+        const yv = dySeries[xi] != null ? dySeries[xi] : dySeries[Math.min(xi + 1, dySeries.length - 1)]
+        return { x: xi, y: yv }
+      })
+      .filter(Boolean)
 
     dyChart = new Chart(dyCtx, {
       type: 'line',
       data: {
-        labels: dyLabels,
         datasets: [
-          { label: '股息率(TTM推算)', data: dySeries, borderColor: '#dc2626', borderWidth: 2, pointRadius: 0, tension: 0, fill: false },
-          ...(hasDivs ? [{ label: '分红除权日 ▼', data: dyEventPts, borderColor: '#dc2626', backgroundColor: '#dc2626', pointRadius: 7, pointStyle: 'triangle', showLine: false }] : []),
+          { label: '股息率(TTM推算)', data: dyDataPts, borderColor: '#dc2626', borderWidth: 2, pointRadius: 0, tension: 0, fill: false, spanGaps: false },
+          ...(dyDivScatter.length ? [{ label: '分红除权日 ▼', data: dyDivScatter, borderColor: '#dc2626', backgroundColor: '#dc2626', pointRadius: 7, pointStyle: 'triangle', showLine: false }] : []),
         ],
       },
       options: {
         responsive: true, maintainAspectRatio: false,
         plugins: { legend: { position: 'top', labels: { usePointStyle: true, font: { size: 11 } } }, tooltip: { enabled: false } },
-        scales: { x: { ticks: { maxTicksLimit: 12, font: { size: 10 } } }, y: { ticks: { callback: v => v.toFixed(1) + '%', font: { size: 10 } }, title: { display: true, text: '%', font: { size: 10 } } } },
+        scales: {
+          x: { type: 'linear', ticks: { callback: function(v) { return klineLabels[Math.round(v)] || '' }, font: { size: 9 }, autoSkipPadding: 1 }, min: zoomState.start - 0.5, max: zoomState.end - 0.5 },
+          y: { ticks: { callback: v => v.toFixed(1) + '%', font: { size: 10 } }, title: { display: true, text: '%', font: { size: 10 } } },
+        },
       },
-      plugins: [{ id: 'dyCross', afterDraw: function(chart) { if (!crossX) return; const ctx = chart.ctx, ra = chart.scales.y; ctx.save(); ctx.setLineDash([4, 3]); ctx.strokeStyle = 'rgba(220,38,38,.25)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(crossX, ra.top); ctx.lineTo(crossX, ra.bottom); ctx.stroke(); ctx.restore() } }],
+      plugins: [{ id: 'dyCross', afterDraw: function(chart) { if (crossX < 0 || crossIdx < 0) return; const ctx = chart.ctx, ra = chart.scales.y, ca = chart.chartArea; ctx.save(); ctx.setLineDash([4, 3]); ctx.strokeStyle = 'rgba(220,38,38,.25)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(crossX, ra.top); ctx.lineTo(crossX, ra.bottom); ctx.stroke(); ctx.restore(); drawXDateLabel(ctx, ca, crossX, klineLabels[crossIdx]) } }],
     })
 
-    // Sync apply zoom
-    dyChart.options.scales.x.min = zoomState.start
-    dyChart.options.scales.x.max = zoomState.end - 1
+    // Sync visible range with kline chart (same -0.5/+0.5 padding)
+    const vs = zoomState.start, ve = zoomState.end
+    dyChart.options.scales.x.min = vs - 0.5
+    dyChart.options.scales.x.max = ve - 0.5
     dyChart.update('none')
 
     // Dy tooltip
@@ -412,12 +551,10 @@ function renderAll() {
       const idx = Math.round(xs.getValueForPixel(mx))
       if (idx < 0 || idx >= dyLabels.length) { dyTT.style.display = 'none'; return }
       const date = dyLabels[idx], dyVal = dySeries[idx], closePr = dyCloses[idx]
-      const dv = dyDivLookup[date]
+      const dv = dyExLookup[date]
 
       if (klineChart && klineChart.scales) {
-        const kxs = klineChart.scales.x
-        const ki = klineLabels.indexOf(date)
-        if (ki >= zoomState.start && ki < zoomState.end) { crossX = kxs.getPixelForValue(ki - zoomState.start); klineChart.draw(); dyChart.draw() }
+        if (idx >= 0 && idx < klineLabels.length && idx >= zoomState.start && idx < zoomState.end) { crossIdx = idx; crossX = klineChart.scales.x.getPixelForValue(idx - zoomState.start); klineChart.draw(); dyChart.draw() }
       }
       let html = `<div style="font-weight:600;margin-bottom:4px;color:#fbbf24">${date}</div><div>股息率(TTM推算): <span style="color:#f87171;font-weight:700">${dyVal != null ? dyVal.toFixed(2) + '%' : '--'}</span></div><div>收盘价: <span style="color:#93c5fd">${fmt(closePr)}</span></div><div style="font-size:10px;color:#9ca3af">公式计算值 · 可能与实际公布值存在差异</div>`
       if (dv) {
@@ -431,7 +568,7 @@ function renderAll() {
       if (top + bh > rect.height - 4) top = rect.height - bh - 4
       dyTT.style.left = left + 'px'; dyTT.style.top = top + 'px'
     }
-    dyCtx.onmouseleave = function() { dyTT.style.display = 'none' }
+    dyCtx.onmouseleave = function() { dyTT.style.display = 'none'; crossX = -1; crossIdx = -1; if (klineChart) klineChart.draw(); dyChart.draw() }
 
     if (dyHint.value) {
       const latestDy = [...dySeries].reverse().find(v => v != null)
