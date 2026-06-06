@@ -29,6 +29,26 @@
 
         <div class="card">
           <h2>{{ stockName }} 月度涨跌幅</h2>
+          <div class="monthly-filter">
+            <input type="date" v-model="mcStart" class="mc-date-input">
+            <span class="mc-date-sep">至</span>
+            <input type="date" v-model="mcEnd" class="mc-date-input">
+            <span class="mc-stats" v-if="mcStats">
+              <span class="mc-stat-item">{{ mcStats.total }}个月</span>
+              <span class="mc-stat-sep">|</span>
+              <span class="mc-stat-item">涨 <b style="color:#ef4444">{{ mcStats.upCount }}</b> 个</span>
+              <span class="mc-stat-item">均 <b style="color:#ef4444">+{{ mcStats.upAvg }}%</b></span>
+              <span class="mc-stat-sep">|</span>
+              <span class="mc-stat-item">跌 <b style="color:#16a34a">{{ mcStats.downCount }}</b> 个</span>
+              <span class="mc-stat-item">均 <b style="color:#16a34a">{{ mcStats.downAvg }}%</b></span>
+              <span class="mc-stat-sep">|</span>
+              <span class="mc-stat-item">最大 <b style="color:#ef4444">+{{ mcStats.maxUp }}%</b></span>
+              <span class="mc-stat-sep">/</span>
+              <span class="mc-stat-item"><b style="color:#16a34a">{{ mcStats.maxDown }}%</b></span>
+              <span class="mc-stat-sep">|</span>
+              <span class="mc-stat-item">平均 <b :style="{color:mcStats.avg>=0?'#ef4444':'#16a34a'}">{{ mcStats.avg >= 0 ? '+' : '' }}{{ mcStats.avg }}%</b></span>
+            </span>
+          </div>
           <div class="chart-wrap" style="height:300px"><canvas ref="monthlyCanvas"></canvas></div>
           <div ref="mSliderWrap" class="slider-wrap">
             <div class="slider-bar"></div>
@@ -74,10 +94,14 @@ const mSliderLKnob = ref(null)
 const mSliderRKnob = ref(null)
 const mSliderStartDate = ref(null)
 const mSliderEndDate = ref(null)
+const mcStart = ref('')
+const mcEnd = ref('')
+const mcStats = ref(null)
 
 let klineChart = null, dyChart = null, monthlyChart = null, seasonalChart = null
 let klineBars = [], klineLabels = [], crossX = -1, crossIdx = -1
 let klineTT = null, dyTT = null, monthlyTT = null
+let mcSorted = []
 let zoomState = null
 let monthlyZoomState = null
 let patternScanResult = null
@@ -105,6 +129,24 @@ function ensureTooltip(container, id) {
     container.appendChild(el)
   }
   return el
+}
+
+function computeMonthlyStats(mcData, startStr, endStr) {
+  if (!mcData.length || !startStr || !endStr) return null
+  const sm = startStr.slice(0, 7), em = endStr.slice(0, 7)
+  const filtered = mcData.filter(([d]) => d >= sm && d <= em)
+  if (!filtered.length) return null
+  const vals = filtered.map(([, v]) => v)
+  const up = vals.filter(v => v > 0), down = vals.filter(v => v < 0)
+  return {
+    total: filtered.length,
+    upCount: up.length, downCount: down.length,
+    upAvg: up.length ? +(up.reduce((a, b) => a + b, 0) / up.length).toFixed(2) : 0,
+    downAvg: down.length ? +(down.reduce((a, b) => a + b, 0) / down.length).toFixed(2) : 0,
+    maxUp: Math.max(...vals, 0),
+    maxDown: Math.min(...vals, 0),
+    avg: +(vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(2),
+  }
 }
 
 function renderAll() {
@@ -300,7 +342,7 @@ function renderAll() {
 
   // ---- Monthly ----
   if (monthlyChart) monthlyChart.destroy()
-  const mcSorted = mc.slice().reverse()
+  mcSorted = mc.slice().reverse()
   const mcLabels = mcSorted.map(m => m[0]), mcData = mcSorted.map(m => m[1])
   let monthlyHoverIdx = -1
   const monthlyCross = {
@@ -447,6 +489,12 @@ function renderAll() {
   }
   document.ontouchend = function() { dragMode = null; mDragMode = null }
 
+  // ---- Monthly stats default: current year ----
+  const now = new Date()
+  mcStart.value = now.getFullYear() + '-01-01'
+  mcEnd.value = now.getFullYear() + '-12-31'
+  mcStats.value = computeMonthlyStats(mcSorted, mcStart.value, mcEnd.value)
+
   // ---- Seasonal ----
   if (seasonalChart) seasonalChart.destroy()
   seasonalChart = new Chart(seasonalCanvas.value, {
@@ -516,7 +564,9 @@ function renderAll() {
 
   // ---- Zoom/Pan ----
   const totalBars = labels.length
-  zoomState = { start: Math.max(0, totalBars - 120), end: totalBars }
+  const currentYear = new Date().getFullYear() + '-'
+  const yearStartIdx = labels.findIndex(l => l.startsWith(currentYear))
+  zoomState = { start: yearStartIdx >= 0 ? yearStartIdx : Math.max(0, totalBars - 120), end: totalBars }
   function applyZoom() {
     const s = zoomState.start, e = zoomState.end
     if (klineChart) {
@@ -724,6 +774,12 @@ onMounted(async () => {
   renderAll()
 })
 watch(activeCode, async () => { await nextTick(); renderAll() })
+
+// Recompute monthly stats when date range changes
+watch([mcStart, mcEnd], () => {
+  if (!mcSorted) return
+  mcStats.value = computeMonthlyStats(mcSorted, mcStart.value, mcEnd.value)
+})
 </script>
 
 <style scoped>
@@ -734,6 +790,13 @@ watch(activeCode, async () => { await nextTick(); renderAll() })
 .chart-wrap { position: relative; }
 .chart-dy-wrap { border-top: 1px solid #e5e7eb; padding-top: 4px; }
 .chart-hint { font-size: 11px; color: #9ca3af; text-align: center; padding: 4px 0 0; }
+.monthly-filter { display: flex; align-items: center; gap: 6px; padding: 6px 0 4px; flex-wrap: wrap; }
+.mc-date-input { background: #1e293b; color: #e2e8f0; border: 1px solid #334155; border-radius: 4px; padding: 4px 8px; font-size: 12px; outline: none; }
+.mc-date-input:focus { border-color: #3b82f6; }
+.mc-date-sep { color: #9ca3af; font-size: 12px; }
+.mc-stats { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; font-size: 12px; color: #cbd5e1; background: #1e293b; border-radius: 6px; padding: 4px 10px; }
+.mc-stat-item { white-space: nowrap; }
+.mc-stat-sep { color: #475569; }
 .slider-wrap { position: relative; height: 40px; margin: 6px 0 0; background: #f3f4f6; border-radius: 4px; cursor: pointer; user-select: none; overflow: hidden; }
 .slider-bar { position: absolute; inset: 0; }
 .slider-handle { position: absolute; top: 0; bottom: 0; background: rgba(37,99,235,.25); border: 2px solid #2563eb; border-radius: 4px; pointer-events: none; z-index: 1; }
