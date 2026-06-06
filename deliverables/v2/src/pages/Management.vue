@@ -217,7 +217,7 @@ async function importReport() {
     const body = JSON.parse(txt)
     const r = await apiCall('POST', '/api/v2/expert/import', body)
     expertStatus.value = r?.success ? '✅ 导入成功' : '❌ ' + (r?.error || '失败')
-    if (r?.success) expertJson.value = ''
+    if (r?.success) { expertJson.value = ''; await data.fetchAll() }
   } catch (e) { expertStatus.value = '❌ ' + (e.message || 'JSON格式错误') }
 }
 

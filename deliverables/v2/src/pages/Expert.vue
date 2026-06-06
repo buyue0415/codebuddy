@@ -181,7 +181,7 @@ function renderCharts() {
 }
 
 onMounted(async () => {
-  if (!data.watchlist.length) await data.fetchAll()
+  await data.fetchAll()
   activeCode.value = data.watchlist[0]?.code || ''
   await nextTick()
   renderCharts()

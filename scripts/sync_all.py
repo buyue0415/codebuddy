@@ -598,8 +598,22 @@ def main():
     for stock in watchlist:
         code = stock['code']
         # Step 7a: Build & write monthly kline first (so seasonal reads fresh data)
-        if code in kline_results and kline_results[code]:
-            daily = kline_results[code]
+        daily = kline_results.get(code, [])
+        if not daily:
+            # Fallback: try loading from existing DB kline_daily
+            try:
+                db_fb = get_db()
+                fb_rows = db_fb.execute(
+                    "SELECT date, open, close, high, low FROM kline_daily "
+                    "WHERE code=? ORDER BY date DESC", [code]
+                ).fetchall()
+                db_fb.close()
+                if fb_rows:
+                    daily = [[r['date'], r['open'], r['close'], r['high'], r['low']] for r in fb_rows]
+                    print(f"  {stock['name']}({code}): fallback to DB daily kline ({len(daily)} bars)")
+            except Exception as e:
+                print(f"  {stock['name']}({code}): DB fallback failed: {e}")
+        if daily:
             monthly = {}
             for bar in daily:
                 m = bar[0][:7]
@@ -631,8 +645,8 @@ def main():
             print(f"  {stock['name']}({code}): seasonal updated (avg monthly chg%)")
         except Exception:
             pass
-        if code in kline_results and kline_results[code]:
-            latest = kline_results[code][0]
+        if daily:
+            latest = daily[0]
             price = latest[2]
             # Calculate dividend yield from dividends table (same logic as refresh_quotes.py)
             try:

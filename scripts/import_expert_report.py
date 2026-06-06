@@ -205,13 +205,24 @@ def import_report(json_data):
         for issue in issues:
             warnings.append(issue)
 
-        # 4. 写入数据库
+        # 4. 写入数据库（按 date 去重：同日期已存在则更新，不存在则插入）
         db = get_db()
         try:
-            db.execute(
-                "INSERT INTO expert_reports(date, report_data) VALUES(?, ?)",
-                [date, json.dumps(report_to_store, ensure_ascii=False)]
-            )
+            report_json = json.dumps(report_to_store, ensure_ascii=False)
+            existing = db.execute(
+                "SELECT id FROM expert_reports WHERE date=?", [date]
+            ).fetchone()
+            if existing:
+                db.execute(
+                    "UPDATE expert_reports SET report_data=? WHERE id=?",
+                    [report_json, existing["id"]]
+                )
+                warnings.append(f"已更新 {date} 的已有报告")
+            else:
+                db.execute(
+                    "INSERT INTO expert_reports(date, report_data) VALUES(?, ?)",
+                    [date, report_json]
+                )
             db.commit()
         except Exception as e:
             return False, f"数据库写入失败: {e}", warnings
