@@ -30,6 +30,13 @@
         <div class="card">
           <h2>{{ stockName }} 月度涨跌幅</h2>
           <div class="chart-wrap" style="height:300px"><canvas ref="monthlyCanvas"></canvas></div>
+          <div ref="mSliderWrap" class="slider-wrap">
+            <div class="slider-bar"></div>
+            <div ref="mSliderHandle" class="slider-handle"></div>
+            <div ref="mSliderLKnob" class="slider-knob slider-lknob"></div>
+            <div ref="mSliderRKnob" class="slider-knob slider-rknob"></div>
+            <div class="slider-hint"><span ref="mSliderStartDate"></span><span ref="mSliderEndDate"></span></div>
+          </div>
         </div>
 
         <div class="card">
@@ -61,11 +68,18 @@ const sliderRKnob = ref(null)
 const sliderHint = ref(null)
 const sliderStartDate = ref(null)
 const sliderEndDate = ref(null)
+const mSliderWrap = ref(null)
+const mSliderHandle = ref(null)
+const mSliderLKnob = ref(null)
+const mSliderRKnob = ref(null)
+const mSliderStartDate = ref(null)
+const mSliderEndDate = ref(null)
 
 let klineChart = null, dyChart = null, monthlyChart = null, seasonalChart = null
 let klineBars = [], klineLabels = [], crossX = -1, crossIdx = -1
-let klineTT = null, dyTT = null
+let klineTT = null, dyTT = null, monthlyTT = null
 let zoomState = null
+let monthlyZoomState = null
 let patternScanResult = null
 
 const stockName = computed(() => data.watchlist.find(s => s.code === activeCode.value)?.name || activeCode.value)
@@ -287,11 +301,151 @@ function renderAll() {
   // ---- Monthly ----
   if (monthlyChart) monthlyChart.destroy()
   const mcSorted = mc.slice().reverse()
+  const mcLabels = mcSorted.map(m => m[0]), mcData = mcSorted.map(m => m[1])
+  let monthlyHoverIdx = -1
+  const monthlyCross = {
+    id: 'monthlyCross',
+    afterDraw: function(chart) {
+      if (monthlyHoverIdx < 0 || !chart.chartArea) return
+      const ctx = chart.ctx, xs = chart.scales.x, ra = chart.scales.y
+      const xp = xs.getPixelForValue(monthlyHoverIdx)
+      // vertical line
+      ctx.save(); ctx.setLineDash([4, 3])
+      ctx.strokeStyle = 'rgba(100,100,255,.35)'; ctx.lineWidth = 1
+      ctx.beginPath(); ctx.moveTo(xp, ra.top); ctx.lineTo(xp, ra.bottom)
+      ctx.stroke(); ctx.restore()
+      // X-axis tick
+      ctx.save(); ctx.strokeStyle = 'rgba(100,100,255,.7)'; ctx.lineWidth = 2.5
+      ctx.beginPath(); ctx.moveTo(xp, chart.chartArea.bottom); ctx.lineTo(xp, chart.chartArea.bottom + 8)
+      ctx.stroke(); ctx.restore()
+      // date label
+      drawXDateLabel(ctx, chart.chartArea, xp, mcLabels[monthlyHoverIdx])
+    },
+  }
   monthlyChart = new Chart(monthlyCanvas.value, {
     type: 'bar',
-    data: { labels: mcSorted.map(m => m[0]), datasets: [{ data: mcSorted.map(m => m[1]), backgroundColor: mcSorted.map(m => m[1] >= 0 ? '#dc2626' : '#16a34a') }] },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { ticks: { maxTicksLimit: 12, font: { size: 10 } } }, y: { ticks: { callback: v => v + '%', font: { size: 10 } } } } },
+    data: { labels: mcLabels, datasets: [{ data: mcData, backgroundColor: mcData.map(v => v >= 0 ? '#dc2626' : '#16a34a') }] },
+    options: { responsive: true, maintainAspectRatio: false, animation: false, plugins: { legend: { display: false }, tooltip: { enabled: false } }, scales: { x: { ticks: { maxTicksLimit: 12, font: { size: 10 } } }, y: { ticks: { callback: v => v + '%', font: { size: 10 } } } } },
+    plugins: [monthlyCross],
   })
+
+  monthlyTT = ensureTooltip(monthlyCanvas.value.parentElement, 'monthly-tooltip')
+  const mcCanvas = monthlyCanvas.value
+  mcCanvas.onmousemove = function(e) {
+    if (!monthlyChart || !monthlyChart.scales) return
+    const rect = mcCanvas.getBoundingClientRect()
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top
+    const xs = monthlyChart.scales.x, ys = monthlyChart.scales.y
+    if (mx < xs.left || mx > xs.right || my < ys.top || my > ys.bottom) {
+      if (monthlyHoverIdx >= 0) { monthlyHoverIdx = -1; monthlyChart.draw() }
+      monthlyTT.style.display = 'none'; return
+    }
+    const idx = Math.round(xs.getValueForPixel(mx))
+    if (idx < 0 || idx >= mcData.length) return
+    monthlyHoverIdx = idx
+    const val = mcData[idx], cls = val >= 0 ? '#ef4444' : '#16a34a', sn = val >= 0 ? '+' : ''
+    monthlyTT.innerHTML = `<div style="font-weight:600;margin-bottom:4px;color:#93c5fd">${mcLabels[idx]}</div><div>涨跌幅: <span style="color:${cls};font-weight:700">${sn}${val.toFixed(2)}%</span></div>`
+    monthlyTT.style.display = 'block'
+    const bw = monthlyTT.offsetWidth || 130, bh = monthlyTT.offsetHeight || 60
+    let left = mx + 16, top = my - bh / 2
+    if (left + bw > rect.width - 4) left = mx - bw - 16
+    if (left < 4) left = 4; if (top < 4) top = 4
+    if (top + bh > rect.height - 4) top = rect.height - bh - 4
+    monthlyTT.style.left = left + 'px'; monthlyTT.style.top = top + 'px'
+    monthlyChart.draw()
+  }
+  mcCanvas.onmouseleave = function() { monthlyTT.style.display = 'none'; monthlyHoverIdx = -1; monthlyChart.draw() }
+
+  // ---- Monthly Zoom/Pan ----
+  const monthlyTotal = mcLabels.length
+  monthlyZoomState = { start: Math.max(0, monthlyTotal - 60), end: monthlyTotal }
+  function applyMonthlyZoom() {
+    const s = monthlyZoomState.start, e = monthlyZoomState.end
+    if (monthlyChart) {
+      monthlyChart.options.scales.x.min = s
+      monthlyChart.options.scales.x.max = e - 1
+      monthlyChart.update('none')
+    }
+    updateMonthlySlider()
+  }
+  applyMonthlyZoom()
+
+  mcCanvas.onwheel = function(e) {
+    e.preventDefault()
+    const range = monthlyZoomState.end - monthlyZoomState.start
+    if (e.ctrlKey || e.metaKey) {
+      const zf = e.deltaY > 0 ? 1.25 : 0.8
+      const center = (monthlyZoomState.start + monthlyZoomState.end) / 2
+      const nr = Math.max(6, Math.min(monthlyTotal, Math.round(range * zf)))
+      monthlyZoomState.start = Math.max(0, Math.round(center - nr / 2))
+      monthlyZoomState.end = Math.min(monthlyTotal, monthlyZoomState.start + nr)
+    } else {
+      const shift = Math.max(1, Math.round(range * 0.15))
+      if (e.deltaY > 0) { monthlyZoomState.start = Math.min(monthlyTotal - 6, monthlyZoomState.start + shift); monthlyZoomState.end = Math.min(monthlyTotal, monthlyZoomState.end + shift) }
+      else { monthlyZoomState.start = Math.max(0, monthlyZoomState.start - shift); monthlyZoomState.end = Math.max(6, monthlyZoomState.end - shift) }
+    }
+    applyMonthlyZoom()
+  }
+
+  buildMonthlySlider()
+
+  function updateMonthlySlider() {
+    if (!mSliderHandle.value) return
+    const total = monthlyTotal
+    const pStart = monthlyZoomState.start / total * 100
+    const pEnd = monthlyZoomState.end / total * 100
+    mSliderHandle.value.style.left = pStart + '%'
+    mSliderHandle.value.style.width = (pEnd - pStart) + '%'
+    mSliderLKnob.value.style.left = pStart + '%'
+    mSliderRKnob.value.style.left = pEnd + '%'
+  }
+  function updateMonthlyFromSlider(x) {
+    const wrap = mSliderWrap.value
+    const rect = wrap.getBoundingClientRect()
+    const w = rect.width || 1
+    const pct = Math.max(0, Math.min(1, (x - rect.left) / w))
+    const range = monthlyZoomState.end - monthlyZoomState.start
+    if (mDragMode === 'pan') {
+      const center = Math.round(pct * monthlyTotal)
+      monthlyZoomState.start = Math.max(0, Math.min(monthlyTotal - range, center - Math.round(range / 2)))
+      monthlyZoomState.end = monthlyZoomState.start + range
+    } else if (mDragMode === 'left') {
+      const ns = Math.round(pct * monthlyTotal)
+      monthlyZoomState.start = Math.max(0, Math.min(monthlyZoomState.end - 6, ns))
+    } else if (mDragMode === 'right') {
+      const ne = Math.round(pct * monthlyTotal)
+      monthlyZoomState.end = Math.min(monthlyTotal, Math.max(monthlyZoomState.start + 6, ne))
+    }
+    applyMonthlyZoom()
+    updateMonthlySlider()
+  }
+  let mDragMode = null
+  function buildMonthlySlider() {
+    const wrap = mSliderWrap.value
+    if (!wrap) return
+    if (mSliderStartDate.value) mSliderStartDate.value.textContent = mcLabels[0] || ''
+    if (mSliderEndDate.value) mSliderEndDate.value.textContent = mcLabels[monthlyTotal - 1] || ''
+    wrap.onmousedown = e => { mDragMode = 'pan'; e.preventDefault() }
+    mSliderLKnob.value.onmousedown = e => { mDragMode = 'left'; e.stopPropagation(); e.preventDefault() }
+    mSliderRKnob.value.onmousedown = e => { mDragMode = 'right'; e.stopPropagation(); e.preventDefault() }
+    wrap.ontouchstart = function() { mDragMode = 'pan' }
+    updateMonthlySlider()
+  }
+
+  // Shared slider document handlers (supports both K-line & monthly sliders)
+  const sGetX = e => e.touches ? e.touches[0].clientX : e.clientX
+  document.onmousemove = function(e) {
+    const x = sGetX(e)
+    if (dragMode) updateFromSlider(x)
+    if (mDragMode) updateMonthlyFromSlider(x)
+  }
+  document.onmouseup = function() { dragMode = null; mDragMode = null }
+  document.ontouchmove = function(e) {
+    const x = sGetX(e)
+    if (dragMode) updateFromSlider(x)
+    if (mDragMode) updateMonthlyFromSlider(x)
+  }
+  document.ontouchend = function() { dragMode = null; mDragMode = null }
 
   // ---- Seasonal ----
   if (seasonalChart) seasonalChart.destroy()
@@ -455,17 +609,10 @@ function renderAll() {
     if (sliderStartDate.value) sliderStartDate.value.textContent = labels[0] || ''
     if (sliderEndDate.value) sliderEndDate.value.textContent = labels[totalBars - 1] || ''
 
-    const getX = e => e.touches ? e.touches[0].clientX : e.clientX
-
-    wrap.onmousedown = e => { dragMode = 'pan'; e.preventDefault() }
+    wrap.onmousedown = function(e) { dragMode = 'pan'; e.preventDefault() }
     sliderLKnob.value.onmousedown = e => { dragMode = 'left'; e.stopPropagation(); e.preventDefault() }
     sliderRKnob.value.onmousedown = e => { dragMode = 'right'; e.stopPropagation(); e.preventDefault() }
-
-    document.onmousemove = e => { if (dragMode) updateFromSlider(getX(e)) }
-    document.onmouseup = () => { dragMode = null }
-    wrap.ontouchstart = e => { dragMode = 'pan' }
-    document.ontouchmove = e => { if (dragMode) updateFromSlider(getX(e)) }
-    document.ontouchend = () => { dragMode = null }
+    wrap.ontouchstart = function() { dragMode = 'pan' }
 
     updateSlider()
   }
