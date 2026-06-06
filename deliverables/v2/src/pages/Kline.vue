@@ -136,22 +136,15 @@ function renderAll() {
   const Chart = window.Chart
   if (!Chart) return
 
-  // Set candlestick colors via prototype defaults: 涨=红 #ef4444 跌=绿 #16a34a
-  try {
-    const elem = Chart.registry.getElement('candlestick')
-    if (elem && elem.prototype && elem.prototype.draw) {
-      const origDraw = elem.prototype.draw
-      elem.prototype.draw = function(ctx) {
-        try {
-          if (typeof this.o === 'number' && typeof this.c === 'number') {
-            this.options.borderColor = this.c >= this.o ? '#ef4444' : '#16a34a'
-            this.options.backgroundColor = this.c >= this.o ? '#ef4444' : '#16a34a'
-          }
-        } catch (_) {}
-        return origDraw.call(this, ctx)
-      }
+  // Chinese convention: 涨=红 #ef4444 跌=绿 #16a34a
+  // (library default is western: up=green, down=red)
+  if (Chart.defaults.elements && Chart.defaults.elements.candlestick) {
+    Chart.defaults.elements.candlestick.color = {
+      up: 'rgba(239,68,68,1)',     // 上涨 → 红色
+      down: 'rgba(22,163,74,1)',   // 下跌 → 绿色
+      unchanged: 'rgba(90,90,90,1)'
     }
-  } catch (e) { /* ignore */ }
+  }
 
   // ---- X-axis date label helper (shared between kline & dy chart) ----
   function drawXDateLabel(ctx, ca, xPos, dateStr) {
