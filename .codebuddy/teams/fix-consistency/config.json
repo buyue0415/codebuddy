@@ -1,0 +1,18 @@
+{
+  "name": "fix-consistency",
+  "leadAgentId": "c12f22c25a0c4231b612d9ccd644941f",
+  "workspacePath": "c:/Users/28312/WorkBuddy/2026-05-18-task-15",
+  "createdAt": "2026-05-28T06:53:37.446Z",
+  "options": {
+    "workspacePath": "c:/Users/28312/WorkBuddy/2026-05-18-task-15",
+    "isAutoTeam": false
+  },
+  "members": [
+    {
+      "memberId": "team-lead@fix-consistency",
+      "name": "team-lead",
+      "role": "Team Lead - coordinates the team and interacts with the user"
+    }
+  ],
+  "isAutoTeam": false
+}

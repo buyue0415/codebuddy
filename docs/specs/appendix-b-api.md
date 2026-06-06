@@ -1,6 +1,8 @@
-# 附录B: API 端点清单
+# 附录 B: API 端点清单
 
-> **基路径**: `http://localhost:8766` (原版: `http://localhost:8765`) | **统一响应**: `{success: bool, data?, error?, message?, output?, count?, trace?}`
+> **基路径**: `http://localhost:8766`
+> **响应格式**: 统一 `{ success: true, data: {...} }` / `{ success: false, error: "...", message: "..." }`
+> **版本**: v2.0 | **更新日期**: 2026-06-06
 
 ---
 
@@ -8,128 +10,184 @@
 
 | HTTP Code | 场景 | 响应体 |
 |-----------|------|--------|
-| 200 | 成功 | `{success: true, data: ...}` |
-| 400 | 参数缺失/无效 | `{success: false, error: "..."}` |
-| 404 | 资源不存在 | `{success: false, error: "..."}` |
-| 409 | 重复添加 | `{success: false, error: "股票 XXX 已存在"}` |
-| 429 | 并发冲突 | `{success: false, error: "刷新已在运行中"}` |
-| 500 | 服务端异常 | `{success: false, error: "...", trace: "..."}` |
+| 200 | 成功 | `{ success: true, data: {...} }` |
+| 200 | 业务异常 | `{ success: false, error: "...", message: "..." }` |
+| 400 | 参数错误/格式错误 | `{ success: false, error: "...", diagnostics: {...} }` |
+| 404 | 资源不存在 | FastAPI 默认 404 |
+| 409 | 资源冲突 | `{ success: false, error: "..." }` |
+| 429 | 并发请求 | `{ success: false, error: "刷新已在运行中" }` |
+| 500 | 内部错误 | `{ success: false, error: traceback }` |
+| 503 | 前端文件缺失 | 纯文本 "前端构建文件缺失" |
 
 ---
 
 ## 完整端点列表
 
-### 初始化
+### 1. 首页与前端静态资源
 
-| 端点 | 方法 | 参数 | 返回值 |
-|------|------|------|--------|
-| `/api/v2/init` | GET | — | 全量数据: `{watchlist, quotes, positions {current, closed, all_trades}, kline_daily, daily_predictions, news, expert_reports, kline, seasonal, learning_params, accuracy_stats}` |
+| 方法 | 路径 | 参数 | 说明 |
+|------|------|------|------|
+| GET | `/` | — | 返回 V2 前端构建产物 `index.html` |
+| GET | `/index.html` | — | 同上 |
+| GET | `/assets/{path}` | path: JS/CSS 资源路径 | V2 前端构建产物静态资源 |
+| GET | `/chart.umd.min.js` | — | Chart.js 图表库 |
+| GET | `/chartjs-chart-financial.min.js` | — | 金融图表库 |
 
-### 自选股 (Watchlist)
+### 2. 初始化
 
-| 端点 | 方法 | 参数 | 返回值 |
-|------|------|------|--------|
-| `/api/v2/watchlist` | GET | — | `{data: [{code, name, market}], count}` |
-| `/api/v2/watchlist` | POST | `{code, name, market}` | `{message, watchlist, output}` |
-| `/api/v2/watchlist/{code}` | DELETE | path: code | `{message}` |
-| `/api/watchlist` | GET | — | `{data: [{code, name, market}]}` (JSON文件版) |
-| `/api/watchlist/add` | POST | `{code, name, market}` | `{message, watchlist, output}` (旧版) |
-| `/api/watchlist/remove` | POST | `{code}` | `{message, watchlist}` (旧版) |
+| 方法 | 路径 | 参数 | 说明 |
+|------|------|------|------|
+| GET | `/api/v2/init` | — | 返回完整初始化数据（配置+自选股+行情+持仓+K线+预测+新闻+专家报告+准确率+学习参数） |
 
-### 行情 (Quotes)
+### 3. 系统
 
-| 端点 | 方法 | 参数 | 返回值 |
-|------|------|------|--------|
-| `/api/v2/quotes` | GET | — | `{data: {code: {price, change, open, high, low, pe, pb, dy}}}` |
-| `/api/v2/quotes/{code}` | GET | path: code | `{data: {price, ...}}` |
+| 方法 | 路径 | 参数 | 说明 |
+|------|------|------|------|
+| GET | `/api/system-data` | — | 返回系统数据快照（历史遗留） |
+| GET | `/api/audit` | — | 运行审计脚本，返回系统状态报告 |
+| GET | `/api/v2/config` | — | 返回系统配置（账户/券商/费率/免责声明） |
+| GET | `/api/v2/snapshot` | — | 返回完整运行时快照 |
+| GET | `/api/search/stocks` | `?keyword=` | 搜索 A 股股票代码/名称 |
+| GET | `/dbview` | `?t=表名` | SQLite 数据库查看器（调试用） |
 
-### 持仓 (Positions)
+### 4. 自选股 (Watchlist)
 
-| 端点 | 方法 | 参数 | 返回值 |
-|------|------|------|--------|
-| `/api/v2/positions` | GET | — | `{data: {current_positions, closed_positions, all_trades}}` |
-| `/api/v2/positions/current` | GET | — | `{data: {code: {qty, avg_cost, trades, dividends, ...}}, count}` |
-| `/api/v2/positions/closed` | GET | — | `{data: {code: {realized_pnl, ...}}, count}` |
-| `/api/v2/trades` | GET | `?code=` (可选) | `{data: [{date, time, code, name, type, qty, price, ...}], count}` |
-| `/api/v2/trades/{code}` | GET | path: code | 同上，按股票过滤 |
-| `/api/v2/dividends` | GET | `?code=` (可选) | `{data: [{date, code, amount, price, per_share}], count}` |
-| `/api/v2/dividends/{code}` | GET | path: code | 同上 |
+| 方法 | 路径 | 参数 | 说明 |
+|------|------|------|------|
+| GET | `/api/v2/watchlist` | — | 获取自选股列表 |
+| POST | `/api/v2/watchlist` | `{ code, name, market }` | 添加自选股（含自动行情刷新） |
+| DELETE | `/api/v2/watchlist/{code}` | — | 删除自选股（清理分析层数据，保留交易层） |
 
-### K线 (K-line)
+### 5. 行情 (Quotes)
 
-| 端点 | 方法 | 参数 | 返回值 |
-|------|------|------|--------|
-| `/api/v2/kline/daily` | GET | `?codes=` (逗号分隔) | `{data: {code: [[date,open,close,high,low]]}}` |
-| `/api/v2/kline/daily/{code}` | GET | path: code | `{data: [[date,open,close,high,low]]}` |
-| `/api/v2/kline/monthly` | GET | `?codes=` (逗号分隔) | `{data: {code: [[date,open,high,low,close,volume,change_pct]]}}` |
-| `/api/v2/kline/monthly/{code}` | GET | path: code | `{data: [[...]]}` |
+| 方法 | 路径 | 参数 | 说明 |
+|------|------|------|------|
+| GET | `/api/v2/quotes` | — | 批量获取自选股实时行情 |
+| GET | `/api/v2/quotes/{code}` | — | 获取单只股票行情 |
+| POST | `/api/v2/quotes/refresh` | — | 手动刷新所有自选股行情 |
 
-### 预测 (Predictions)
+### 6. 持仓与交易 (Positions & Trades)
 
-| 端点 | 方法 | 参数 | 返回值 |
-|------|------|------|--------|
-| `/api/v2/predictions/daily` | GET | — | `{data: [{date, code, prev_close, next_day{direction, confidence, high, low, advice, entry_zone}, hourly[], signals{}, actual{}}], count}` |
-| `/api/v2/predictions/daily/{code}` | GET | path: code | 同上，按股票过滤 |
+| 方法 | 路径 | 参数 | 说明 |
+|------|------|------|------|
+| GET | `/api/v2/positions` | — | 获取全部持仓（当前+已平仓） |
+| GET | `/api/v2/positions/current` | — | 仅当前持仓 |
+| GET | `/api/v2/positions/closed` | — | 仅已平仓持仓 |
+| GET | `/api/v2/trades` | `?code=` | 获取交易记录（可筛选股票代码） |
+| GET | `/api/v2/trades/{code}` | — | 获取单只股票交易记录 |
+| GET | `/api/v2/dividends` | — | 获取分红记录 |
+| GET | `/api/v2/dividends/{code}` | — | 获取单只股票分红记录 |
+| GET | `/api/v2/dividend-yield-series` | — | 获取股息率时间序列 |
 
-### 新闻 (News)
+### 7. K 线 (Kline)
 
-| 端点 | 方法 | 参数 | 返回值 |
-|------|------|------|--------|
-| `/api/v2/news` | GET | `?filter=all` / `major` / `{code}` | `{data: [{date, code, title, summary, source, sentiment, major}]}` |
+| 方法 | 路径 | 参数 | 说明 |
+|------|------|------|------|
+| GET | `/api/v2/kline/daily` | — | 批量获取自选股日K线 |
+| GET | `/api/v2/kline/daily/{code}` | — | 获取单只股票日K线 |
+| GET | `/api/v2/kline/monthly` | — | 批量获取自选股月K线 |
+| GET | `/api/v2/kline/monthly/{code}` | — | 获取单只股票月K线 |
 
-### 专家报告 (Expert Reports)
+### 8. 预测 (Predictions)
 
-| 端点 | 方法 | 参数 | 返回值 |
-|------|------|------|--------|
-| `/api/v2/expert` | GET | — | `{data: [{date, stocks: {...}}]}` |
-| `/api/v2/expert/import` | POST | JSON 报告体 | `{success, message, warnings}` |
-| `/api/expert/import` (兼容) | POST | JSON 报告体 | 重定向至 `/api/v2/expert/import` |
+| 方法 | 路径 | 参数 | 说明 |
+|------|------|------|------|
+| GET | `/api/v2/predictions/daily` | — | 批量获取自选股每日预测 |
+| GET | `/api/v2/predictions/daily/{code}` | — | 获取单只股票每日预测 |
 
-### 学习与准确率 (Learning & Accuracy)
+### 9. 新闻 (News)
 
-| 端点 | 方法 | 参数 | 返回值 |
-|------|------|------|--------|
-| `/api/v2/learning` | GET | `?code=` (可选) | `{data: {code: {signal_weights, hourly_bias, seasonal_adj, confidence_beta, learning_rate, mw_beta, update_count}}}` |
-| `/api/v2/accuracy` | GET | `?code=` (可选) | `{data: {code: {last_20/last_60: {direction{correct,total,rate}, range{...}, hourly{...}}}}}` |
+| 方法 | 路径 | 参数 | 说明 |
+|------|------|------|------|
+| GET | `/api/v2/news` | — | 获取自选股新闻列表 |
 
-### 季节性 (Seasonal)
+### 10. 专家报告 (Expert Reports)
 
-| 端点 | 方法 | 参数 | 返回值 |
-|------|------|------|--------|
-| `/api/v2/seasonal` | GET | — | `{data: {code: [factor×12]}}` |
-| `/api/v2/seasonal/{code}` | GET | path: code | `{data: [factor×12]}` |
+| 方法 | 路径 | 参数 | 说明 |
+|------|------|------|------|
+| GET | `/api/v2/expert` | — | 获取专家分析报告列表 |
+| POST | `/api/v2/expert/import` | `{ company, title, content, analysis }` | 导入新的专家报告 |
+| POST | `/api/expert/import` | — | 旧版兼容接口（同 `/api/v2/expert/import`） |
 
-### 系统配置 (Config)
+### 11. 学习与准确率 (Learning & Accuracy)
 
-| 端点 | 方法 | 参数 | 返回值 |
-|------|------|------|--------|
-| `/api/v2/config` | GET | — | `{data: {account, broker, server_port, fee_rates, price_strategy, advice_templates, disclaimer}}` |
+| 方法 | 路径 | 参数 | 说明 |
+|------|------|------|------|
+| GET | `/api/v2/learning` | — | 获取学习参数（MWU 权重 + Beta 衰减） |
+| GET | `/api/v2/accuracy` | — | 批量获取自选股准确率统计 |
+| GET | `/api/v2/accuracy/{code}` | — | 获取单只股票准确率统计 |
 
-### 搜索 (Search)
+### 12. 季节性 (Seasonal)
 
-| 端点 | 方法 | 参数 | 返回值 |
-|------|------|------|--------|
-| `/api/search/stocks` | GET | `?q=` 关键词 | `{data: [{code, name, market, py, score}]}` (最多15条) |
+| 方法 | 路径 | 参数 | 说明 |
+|------|------|------|------|
+| GET | `/api/v2/seasonal` | — | 批量获取自选股季节性数据 |
+| GET | `/api/v2/seasonal/{code}` | — | 获取单只股票季节性数据 |
 
-### 触发器 (Triggers)
+### 13. 触发器 (Triggers)
 
-| 端点 | 方法 | 参数 | 返回值 |
-|------|------|------|--------|
-| `/api/trigger/news` | POST | — | `{success, output, message}` |
-| `/api/trigger/predict` | POST | — | `{success, message, output, data?}` |
-| `/api/trigger/update_statement` | POST | — | `{success, output, message}` |
-| `/api/trigger/expert` | POST | `{code, name}` | `{success, message}` (返回提示，不执行) |
+| 方法 | 路径 | 参数 | 说明 |
+|------|------|------|------|
+| POST | `/api/trigger/news` | — | 手动触发现新闻抓取 |
+| POST | `/api/trigger/predict` | — | 手动触发全量同步（sync_all.py） |
+| POST | `/api/trigger/update_statement` | — | 手动触发对账单重新解析 |
+| POST | `/api/trigger/expert` | — | 手动触发专家报告导入 |
 
-### 上传 (Upload)
+### 14. 上传 (Upload)
 
-| 端点 | 方法 | 参数 | 返回值 |
-|------|------|------|--------|
-| `/api/upload/statement` | POST | `multipart/form-data` (xlsx) | `{success, message, output}` |
+| 方法 | 路径 | 参数 | 说明 |
+|------|------|------|------|
+| POST | `/api/upload/statement` | `file: UploadFile` | 上传广发证券对账单 Excel（自动解析+写入DB） |
 
-### 审计与工具 (Audit & Tools)
+### 15. 回测 (Backtest) — V0.9
 
-| 端点 | 方法 | 参数 | 返回值 |
-|------|------|------|--------|
-| `/api/audit` | GET | — | `{success, output}` |
-| `/api/system-data` | GET | — | `{success, data: {...}}` (遗留JSON) |
-| `/dbview` | GET | `?t=` 表名 | HTML 数据库浏览器 |
+| 方法 | 路径 | 参数 | 说明 |
+|------|------|------|------|
+| POST | `/api/v2/backtest/run` | `{ codes, start_date, end_date }` | 启动回测任务 |
+| GET | `/api/v2/backtest/status` | — | 查询回测任务状态 |
+| POST | `/api/v2/backtest/stop` | — | 停止运行中的回测任务 |
+| GET | `/api/v2/backtest/results/{run_id}` | — | 获取指定回测结果 |
+| GET | `/api/v2/backtest/history` | — | 获取历史回测记录 |
+
+### 16. 纸面交易 (Paper Trading) — V0.9
+
+| 方法 | 路径 | 参数 | 说明 |
+|------|------|------|------|
+| GET | `/api/v2/paper/account` | — | 获取纸面交易账户信息 |
+| GET | `/api/v2/paper/positions` | — | 获取纸面交易持仓 |
+| GET | `/api/v2/paper/trades` | — | 获取纸面交易记录 |
+| GET | `/api/v2/paper/suggestions` | — | 获取每日交易建议 |
+| GET | `/api/v2/paper/intraday/{code}` | — | 获取盘中数据 |
+| POST | `/api/v2/paper/reset` | — | 重置纸面交易账户 |
+| GET | `/api/v2/paper/performance` | — | 获取纸面交易表现指标 |
+
+### 17. 形态规则 (Pattern Rules) — V0.9
+
+| 方法 | 路径 | 参数 | 说明 |
+|------|------|------|------|
+| GET | `/api/v2/pattern-rules` | — | 获取所有K线形态规则 |
+| GET | `/api/v2/pattern-rules/{rule_id}` | — | 获取单条形态规则 |
+| POST | `/api/v2/pattern-rules` | `{ name, description, type, code }` | 新增形态规则 |
+| PUT | `/api/v2/pattern-rules/{rule_id}` | — | 更新形态规则 |
+| DELETE | `/api/v2/pattern-rules/{rule_id}` | — | 删除形态规则 |
+| POST | `/api/v2/pattern-rules/init` | — | 初始化33条标准形态规则 |
+| GET | `/api/v2/pattern-scan/{code}` | — | 扫描指定股票的K线形态 |
+
+### 18. 数据文件服务
+
+| 方法 | 路径 | 参数 | 说明 |
+|------|------|------|------|
+| GET | `/data/{path}` | — | 提供 `data/` 目录下的静态文件服务 |
+| GET | `/scripts/{path}` | — | 提供 `scripts/` 目录下的非 .py 静态文件 |
+
+---
+
+## 统计
+
+| 维度 | 数量 |
+|------|------|
+| GET 端点 | ~45 |
+| POST 端点 | ~13 |
+| DELETE 端点 | 2 |
+| PUT 端点 | 1 |
+| **合计** | **~61 个端点** |

@@ -1,0 +1,8 @@
+金融数据查询结果说明
+========================================
+查询内容: 兴业银行601166近3年日K线前复权数据，包括日期、开盘价、收盘价、最高价、最低价、成交量、涨跌幅
+数据文件路径: C:\Users\28312\WorkBuddy\2026-05-18-task-15\miaoxiang\mx_finance_data\mx_finance_data_067c6e8f.xlsx
+描述文件路径: C:\Users\28312\WorkBuddy\2026-05-18-task-15\miaoxiang\mx_finance_data\mx_finance_data_067c6e8f_description.txt
+数据行数: 31
+表数量: 5
+Sheet 列表: 兴业银行(601166.SH)的区间涨跌幅、区间换手率等, 兴业银行(601166.SH)的BOLL布林线LOW、BOLL, 兴业银行(601166.SH)的开盘价、收盘价等, 兴业银行(601166.SH)当前的支撑位、压力位, 兴业银行(601166.SH)当前的涨跌幅、5日涨跌幅等

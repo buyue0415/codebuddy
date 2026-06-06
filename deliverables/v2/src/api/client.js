@@ -1,6 +1,6 @@
 /**
  * API Client — 与旧版 core.js apiCall 完全一致的接口封装
- * 通过 Vite proxy 调用 http://127.0.0.1:8765 的后端 API
+ * 通过 Vite proxy 调用 http://127.0.0.1:8766 的后端 API
  */
 
 const API_BASE = ''  // Vite proxy handles /api → :8766

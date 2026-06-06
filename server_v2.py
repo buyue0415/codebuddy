@@ -685,11 +685,44 @@ def api_response(data: Any = None, success: bool = True,
 # Root / Static files / DB viewer
 # ──────────────────────────────────────────────────────────────────────────
 
+# ──────────────────────────────────────────────────────────────────────────
+# V2 frontend static file serving
+# ──────────────────────────────────────────────────────────────────────────
+
+V2_DIST = os.path.join(ROOT, "deliverables", "v2", "dist")
+
 @app.get("/")
 @app.get("/index.html")
 def root_page():
-    """Serve main page (identical to original root/index.html handler)."""
-    return _serve_file_content("deliverables/bank-stock-system.html")
+    """Serve main page (V2 frontend built with Vue)."""
+    idx = os.path.join(V2_DIST, "index.html")
+    if os.path.exists(idx):
+        return HTMLResponse(content=open(idx, "r", encoding="utf-8").read())
+    return HTMLResponse("<h1>前端构建文件缺失，请先构建 V2 前端</h1>", status_code=503)
+
+@app.get("/assets/{rest_of_path:path}")
+async def serve_v2_assets(rest_of_path: str):
+    """Serve V2 dist assets (JS/CSS bundles)."""
+    path = os.path.join(V2_DIST, "assets", rest_of_path)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404)
+    return _serve_file_content(os.path.relpath(path, ROOT))
+
+@app.get("/chart.umd.min.js")
+async def serve_chart_umd():
+    """Serve chart library from V2 dist."""
+    path = os.path.join(V2_DIST, "chart.umd.min.js")
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404)
+    return _serve_file_content(os.path.relpath(path, ROOT))
+
+@app.get("/chartjs-chart-financial.min.js")
+async def serve_chart_financial():
+    """Serve chart financial library from V2 dist."""
+    path = os.path.join(V2_DIST, "chartjs-chart-financial.min.js")
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404)
+    return _serve_file_content(os.path.relpath(path, ROOT))
 
 
 @app.get("/dbview")
@@ -1275,17 +1308,15 @@ def api_trigger_news():
 def api_trigger_update_statement():
     """Trigger statement update (identical to original)."""
     ok, out = run_script("update_from_statement.py", 60)
-    ok2, out2 = run_script("reinject_from_db.py", 30)
-    if ok and ok2:
+    if ok:
         return api_response(
             message="持仓数据已更新，刷新页面查看",
             output=out[-1000:] if out else "",
         )
     else:
-        err_msg = "解析失败" if not ok else "HTML注入失败"
         return api_response(
             success=False,
-            error=err_msg + (" (update)" if not ok else " (reinject)"),
+            error="解析失败",
             message="对账单更新失败，请检查文件格式或重新上传",
             output=out[-1000:] if out else "",
         )
@@ -1450,36 +1481,12 @@ async def api_upload_statement(file: UploadFile = File(...)):
             output=out[-500:] if out else "",
         )
 
-    # ── Step 2: Reinject HTML ──
-    ok2, out2 = run_script("reinject_from_db.py", 30)
-    if not ok2:
-        return api_response(
-            success=False,
-            error="HTML 注入失败",
-            message="持仓数据已解析并写入数据库，但页面未能自动更新。请手动运行 reinject_from_db.py。",
-            output=out2[-500:] if out2 else "",
-        )
+
 
     return api_response(
         message="对账单已更新，刷新页面查看",
         output=out[-500:] if out else "",
     )
-
-
-# ──────────────────────────────────────────────────────────────────────────
-# Static file serving (must be last to not shadow API routes)
-# ──────────────────────────────────────────────────────────────────────────
-
-@app.get("/deliverables/{rest_of_path:path}")
-async def serve_deliverables(rest_of_path: str):
-    """Serve static files from deliverables/ directory (identical to original)."""
-    path = f"deliverables/{rest_of_path}"
-    if rest_of_path.endswith(".py"):
-        return api_response(success=False, error="Forbidden", status_code=403)
-    result = _serve_file_content(path)
-    if result is None:
-        raise HTTPException(status_code=404)
-    return result
 
 
 @app.get("/data/{rest_of_path:path}")

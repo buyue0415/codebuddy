@@ -238,7 +238,7 @@ async function checkServer() {
     const r = await apiCall('GET', '/api/v2/config')
     serverOnline.value = r?.success
     serverStatus.value = r?.success
-      ? '已连接 · 端口8765 · 监控' + data.watchlist.length + '只股票'
+      ? '已连接 · 端口8766 · 监控' + data.watchlist.length + '只股票'
       : '服务异常'
   } catch (e) {
     serverOnline.value = false

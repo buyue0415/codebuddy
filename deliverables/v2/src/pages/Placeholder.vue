@@ -4,7 +4,6 @@
       <h2>🚧 {{ pageTitle }}</h2>
       <div class="info">
         <p>此页面正在迁移中，即将完成。</p>
-        <p>当前可通过 <a :href="legacyUrl" target="_blank">旧版页面</a> 访问完整功能。</p>
         <p class="hint">Phase 2-3 计划迁移内容</p>
       </div>
     </div>
@@ -30,10 +29,6 @@ const pageTitleMap = {
 const pageTitle = computed(() => {
   const name = route.name
   return pageTitleMap[name] ? pageTitleMap[name] + ' — 迁移中' : '页面迁移中'
-})
-
-const legacyUrl = computed(() => {
-  return `http://localhost:8765`
 })
 </script>
 
