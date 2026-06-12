@@ -46,9 +46,11 @@ _BROKER_TABLES = [
     "positions", "closed_positions", "trades", "dividends",
 ]
 
-# ─── Refresh lock (identical to original) ────────────────────────────────────
+# ─── Refresh locks (separate per endpoint to avoid cross-blocking) ────────────
 _refresh_lock = threading.Lock()
-_refresh_in_progress = False
+_refresh_in_progress = False        # used by watchlist add/remove (legacy)
+_predict_in_progress = False         # POST /api/trigger/predict
+_quotes_refresh_in_progress = False  # POST /api/v2/quotes/refresh
 
 # ─── DB imports (identical to original) ──────────────────────────────────────
 try:
@@ -61,7 +63,7 @@ try:
         get_all_kline_daily, get_all_kline_monthly,
         get_all_predictions, get_all_seasonal, get_all_accuracy_stats,
         get_all_monthly_changes, get_all_learning_params,
-        get_dividend_yield_series,
+        get_dividend_yield_series, get_quotes_by_date,
         init_pattern_rules_tables, get_pattern_rules, get_pattern_rule,
         insert_pattern_rule, update_pattern_rule, delete_pattern_rule)
     DB_AVAILABLE = True
@@ -267,14 +269,17 @@ def search_stocks(keyword):
 
 # ─── Subprocess execution (identical to original) ────────────────────────────
 
-def run_script(script_name, timeout=60):
+def run_script(script_name, timeout=60, args=None):
     """Run a Python script in scripts/ directory (identical to original)."""
     script_path = os.path.join(ROOT, "scripts", script_name)
     if not os.path.exists(script_path):
         return False, f"Script not found: {script_path}"
     try:
+        cmd = [PYTHON, script_path]
+        if args:
+            cmd.extend(args)
         result = subprocess.run(
-            [PYTHON, script_path],
+            cmd,
             cwd=ROOT,
             capture_output=True,
             text=True,
@@ -905,6 +910,16 @@ def api_v2_quotes_batch():
         return api_response(success=False, error=str(e), status_code=500)
 
 
+@app.get("/api/v2/quotes/history")
+def api_v2_quotes_history(date: str = Query(..., description="日期 YYYY-MM-DD")):
+    """Get quotes data for a specific historical date from kline_daily."""
+    try:
+        return api_response(data=get_quotes_by_date(date)) if DB_AVAILABLE else api_response(
+            success=False, error="DB not available", status_code=500)
+    except Exception as e:
+        return api_response(success=False, error=str(e), status_code=500)
+
+
 @app.get("/api/v2/quotes/{code}")
 def api_v2_quotes_single(code: str):
     """Single stock quote by path (identical to original)."""
@@ -1324,14 +1339,14 @@ def api_trigger_update_statement():
 
 @app.post("/api/trigger/predict")
 def api_trigger_predict():
-    """Trigger full sync (identical to original)."""
-    global _refresh_in_progress
-    if _refresh_in_progress:
-        return api_response(success=False, error="刷新已在运行中，请稍候", status_code=429)
+    """Trigger full sync (via scheduler.py for unified guards: trading-day, lock, intraday)."""
+    global _predict_in_progress
+    if _predict_in_progress:
+        return api_response(success=False, error="全量同步已在运行中，请稍候", status_code=429)
 
-    _refresh_in_progress = True
+    _predict_in_progress = True
     try:
-        ok, out = run_script("sync_all.py", 180)
+        ok, out = run_script("scheduler.py", 240, args=['sync'])
         if ok:
             try:
                 fresh_data = _build_init_data()
@@ -1346,13 +1361,15 @@ def api_trigger_predict():
                     output=out[-1000:] if out else "",
                 )
         else:
+            # Check if skipped (non-trading day or locked)
+            skip_msg = "非交易日跳过" if "SKIP" in (out or "") else "同步失败"
             return api_response(
                 success=False,
-                error="同步失败",
+                error=skip_msg,
                 output=out[-1000:] if out else "",
             )
     finally:
-        _refresh_in_progress = False
+        _predict_in_progress = False
 
 
 @app.post("/api/trigger/expert")
@@ -1366,14 +1383,15 @@ async def api_trigger_expert(request: Request):
     )
 
 
+@app.get("/api/v2/quotes/history")
 @app.post("/api/v2/quotes/refresh")
 def api_v2_quotes_refresh():
     """Lightweight quotes refresh (identical to original)."""
-    global _refresh_in_progress
-    if _refresh_in_progress:
-        return api_response(success=False, error="刷新已在运行中，请稍候", status_code=429)
+    global _quotes_refresh_in_progress
+    if _quotes_refresh_in_progress:
+        return api_response(success=False, error="行情刷新已在运行中，请稍候", status_code=429)
 
-    _refresh_in_progress = True
+    _quotes_refresh_in_progress = True
     try:
         ok, out = run_script("refresh_quotes.py", 60)
         if ok and out:
@@ -1411,7 +1429,7 @@ def api_v2_quotes_refresh():
                 output=out[-500:] if out else "",
             )
     finally:
-        _refresh_in_progress = False
+        _quotes_refresh_in_progress = False
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -1830,48 +1848,53 @@ def api_paper_trades(code: str = Query(default=''), limit: int = Query(default=5
 
 @app.get("/api/v2/paper/suggestions")
 def api_paper_suggestions(code: str = Query(default=''), date: str = Query(default=None)):
+    """Read-only: return existing suggestions without triggering generation or execution."""
     if date is None:
         date = TODAY
     _market_status = get_market_status()
     suggestions = get_paper_suggestions(date=date, code=code if code else None)
-
-    # Only generate fresh & auto-execute for TODAY (not historical dates)
-    is_today = (date == TODAY)
-    if is_today:
-        # Generate fresh suggestions if none exist for today
-        if not suggestions:
-            try:
-                from paper_trading import generate_suggestions as _gen_sug
-                fresh = _gen_sug()
-                if fresh:
-                    from db_helper import upsert_paper_suggestion
-                    for sug in fresh:
-                        upsert_paper_suggestion(sug)
-                    suggestions = get_paper_suggestions(date=date, code=code if code else None)
-            except Exception:
-                pass
-
-        # Auto-execute any UNEXECUTED suggestions only when market is open
-        unexecuted = [s for s in (suggestions or []) if s.get('executed') != 1]
-        if unexecuted and is_market_open():
-            try:
-                import sys as _sys
-                _sys.stderr.write(f"[Paper API] Found {len(unexecuted)} unexecuted suggestions, calling auto_execute...\n")
-                from paper_trading import auto_execute as _auto_exec
-                _auto_exec()
-                suggestions = get_paper_suggestions(date=date, code=code if code else None)
-            except Exception as _e:
-                import traceback as _tb
-                _sys.stderr.write(f"[Paper API] auto_execute ERROR: {_e}\n{_tb.format_exc()}\n")
-        elif unexecuted:
-            import sys as _sys
-            _sys.stderr.write(f"[Paper API] {len(unexecuted)} unexecuted suggestions but market is {_market_status}. Skipping.\n")
-
     return api_response(
         data=suggestions, count=len(suggestions),
         market_status=_market_status,
         generated_at=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
     )
+
+
+@app.post("/api/v2/paper/execute")
+def api_paper_execute():
+    """Manually execute paper trading: generate suggestions and execute trades."""
+    try:
+        _market_status = get_market_status()
+        if _market_status != 'open':
+            return api_response(success=False, error=f"当前非交易时段 ({_market_status})，无法执行交易")
+
+        from paper_trading import auto_execute as _auto_exec
+        _auto_exec()
+
+        # Return updated suggestions and account
+        suggestions = get_paper_suggestions(date=TODAY, code=None)
+        from db_helper import get_db
+        db = get_db()
+        exec_count = db.execute(
+            "SELECT COUNT(*) FROM paper_suggestions WHERE date=? AND executed=1", [TODAY]
+        ).fetchone()[0]
+        db.close()
+
+        if exec_count > 0:
+            return api_response(
+                data=suggestions, count=len(suggestions),
+                executed_count=exec_count,
+                message=f"执行完成，今日共 {exec_count} 笔交易",
+            )
+        else:
+            return api_response(
+                data=suggestions, count=len(suggestions),
+                executed_count=0,
+                message="今日未生成有效交易（无满足条件的信号或无行情数据）",
+            )
+    except Exception as e:
+        import traceback as _tb
+        return api_response(success=False, error=f"模拟交易执行失败: {e}\n{_tb.format_exc()}", status_code=500)
 
 
 @app.get("/api/v2/paper/intraday/{code}")

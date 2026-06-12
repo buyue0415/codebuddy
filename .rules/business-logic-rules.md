@@ -301,3 +301,32 @@ shutil.copy(original_path, backup_path)
 # SHOULD: 单端点响应不超过 500KB
 # MUST: stdout 截断 3000 字符, stderr 截断 1000 字符
 ```
+
+---
+
+## 8. 分时数据收集规则
+
+### 8.1 分钟数据采集
+
+**MUST**:
+- 交易日盘中每 60 分钟调用 `westock-data minute` 获取全量分钟数据
+- 使用 `INSERT OR REPLACE` 写入 `intraday_quotes` 表，`UNIQUE(code, timestamp)` 去重
+- 采集逻辑封装在 `collect_intraday.py`，支持 `once`（单次）/ `loop`（循环）/ `backfill`（回填）三种模式
+
+**MUST NOT**:
+- 不要对 `westock-data minute` 返回的数据进行插值或修正（数据源保证完整性）
+- 不要在非交易日运行采集
+
+### 8.2 日K线降级规则
+
+当用户查询 >5 个交易日的历史日期分时数据时，若 `intraday_quotes` 表无数据，自动触发降级：
+
+**MUST**:
+- 从 `kline_daily` 表取该日 O/H/L/C 四个值
+- 生成 4 个时间点：09:30=开盘, 10:00=最高, 14:30=最低, 15:00=收盘
+- 标记 `is_kline_fallback: true`，供前端区分数据来源
+- 收盘点附带当日成交量（来自 `kline_daily.volume`）
+
+**MUST NOT**:
+- 降级生成的数据不被持久化到 `intraday_quotes` 表（查询时实时计算）
+- 降级逻辑不修改 `kline_daily` 表数据

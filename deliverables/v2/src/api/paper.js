@@ -63,6 +63,10 @@ export async function resetPaperAccount(initialCapital = 100000) {
   return apiCall('POST', '/api/v2/paper/reset', { initial_capital: initialCapital })
 }
 
+export async function executePaperTrading() {
+  return apiCall('POST', '/api/v2/paper/execute')
+}
+
 // ── Intraday Quotes ──
 
 export async function fetchIntraday(code, date = '') {

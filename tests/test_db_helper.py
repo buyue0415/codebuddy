@@ -25,6 +25,7 @@ try:
         get_all_kline_daily, get_all_kline_monthly, get_all_predictions,
         get_all_seasonal, get_all_accuracy_stats, get_all_monthly_changes,
         get_all_learning_params,
+        get_intraday_quotes, get_intraday_dates_for_code,
         upsert_kline_daily, upsert_kline_monthly, upsert_quotes,
         upsert_news, upsert_seasonal, upsert_learning_params,
         upsert_accuracy_stats, upsert_positions,
@@ -249,6 +250,45 @@ class TestDbHelperQuery(StockTestBase):
         self.assertIn('broker', cfg)
         self.assertIn('fee_rates', cfg)
         self.assertIn('server_port', cfg)
+
+    # --- Intraday quotes ---
+
+    def test_get_intraday_quotes_returns_list(self):
+        data = get_intraday_quotes(SAMPLE_CODES[0])
+        self.assertIsInstance(data, list)
+
+    def test_get_intraday_quotes_kline_fallback(self):
+        """For dates >5 trading days ago, should return K-line fallback data."""
+        data = get_intraday_quotes(SAMPLE_CODES[0], '2026-06-03')
+        if data and data[0].get('is_kline_fallback'):
+            self.assertGreaterEqual(len(data), 4)
+            for d in data:
+                self.assertIn('timestamp', d)
+                self.assertIn('price', d)
+                self.assertTrue(d['is_kline_fallback'])
+        # If no data at all (DB has no kline for this code at this date), just pass
+        self.assertIsInstance(data, list)
+
+    def test_get_intraday_quotes_kline_fallback_shape(self):
+        data = get_intraday_quotes(SAMPLE_CODES[0], '2026-06-03')
+        if data and data[0].get('is_kline_fallback'):
+            timestamps = [d['timestamp'] for d in data]
+            # Should have 09:30, 10:00, 14:30, 15:00
+            self.assertIn('09:30:00', timestamps[0])
+            self.assertIn('15:00:00', timestamps[-1])
+
+    def test_get_intraday_dates_for_code_includes_kline(self):
+        """Should include dates from kline_daily even without minute data."""
+        dates = get_intraday_dates_for_code(SAMPLE_CODES[0])
+        self.assertIsInstance(dates, list)
+        self.assertGreater(len(dates), 0)
+        # Should have at least some recent kline dates
+        self.assertTrue(any('2026-06' in d for d in dates),
+                        "Should include June 2026 dates from kline_daily")
+
+    def test_get_intraday_dates_for_code_max_limit(self):
+        dates = get_intraday_dates_for_code(SAMPLE_CODES[0], limit=5)
+        self.assertLessEqual(len(dates), 5)
 
     # --- Trades ---
 

@@ -8,10 +8,10 @@ V0.7 ML-Enhanced optimizations:
   - Data quality: automatic outlier detection and cleaning
   - Backward compatible: all V0.6 APIs preserved
 
-Execution flow (8 steps, SQLite-only, no legacy JSON):
-  Step 1: Fetch news          Step 1.5: Fetch dividends (web)
+Execution flow (7 steps, SQLite-only, no legacy JSON):
+  Step 1: Fetch dividends (web)   Step 1.5: Sync dividends from trades
   Step 2: Parallel K-line fetch
-  Step 3: Backfill predictions Step 4: Recalculate accuracy
+  Step 3: Backfill predictions    Step 4: Recalculate accuracy
   Step 5: Self-learning (Adaptive MWU) Step 6: Generate predictions (V3)
   Step 7: Seasonal + monthly + quotes
 
@@ -76,8 +76,9 @@ def fetch_kline(market_code: str, limit: int = 2000) -> list:
         for line in text.strip().split('\n'):
             parts = [p.strip() for p in line.split('|') if p.strip()]
             if len(parts) >= 5 and parts[0][:4].isdigit():
+                volume = float(parts[5]) if len(parts) >= 6 else 0.0
                 data.append([parts[0], float(parts[1]), float(parts[2]),
-                             float(parts[3]), float(parts[4])])
+                             float(parts[3]), float(parts[4]), volume])
         if result.returncode != 0:
             print(f"  K-line fetch {market_code}: Node exited {result.returncode}")
         return data
@@ -96,7 +97,7 @@ def sync_one_stock(stock: dict) -> tuple:
     kdata = fetch_kline(f'{mkt}{code}')
     if kdata:
         kdata.sort(key=lambda x: x[0], reverse=True)
-        bars = [[k[0], k[1], k[2], k[3], k[4]] for k in kdata]
+        bars = [[k[0], k[1], k[2], k[3], k[4], k[5]] for k in kdata]
         try:
             upsert_kline_daily(code, bars)
             print(f"  {name}({code}): {len(kdata)} bars")
@@ -175,36 +176,8 @@ def main():
     watchlist = get_watchlist()
     _log(f"sync_all START: {len(watchlist)} stocks")
 
-    # Step 1: Fetch news with dedup
-    _log("Step 1: Fetching news...")
-    try:
-        from fetch_news import fetch_news_node
-        from db_helper import upsert_news
-        all_news = []
-        for stock in watchlist:
-            code, name, mkt = stock['code'], stock['name'], stock.get('market', 'sh')
-            items = fetch_news_node(f'{mkt}{code}')
-            if items:
-                print(f"  News for {name}({code}): {len(items)} items")
-                all_news.extend(items)
-            else:
-                print(f"  News for {name}({code}): no data")
-        if all_news:
-            # In-memory dedup by URL first, fallback to (title, date, code)
-            seen = set()
-            deduped = []
-            for n in all_news:
-                key = (n.get('url', ''), n['title'], n['date'], n['code'])
-                if key not in seen:
-                    seen.add(key)
-                    deduped.append(n)
-            upsert_news(deduped)
-            print(f"  Saved {len(deduped)} unique news items (filtered from {len(all_news)})")
-    except Exception as e:
-        print(f"  News fetch skipped: {e}")
-
-    # Step 1.5: Fetch dividend history from web (before K-line, so calc_dividend_yield has data)
-    _log("Step 1.5: Fetching dividends...")
+    # Step 1: Fetch dividend history from web (before K-line, so calc_dividend_yield has data)
+    _log("Step 1: Fetching dividends...")
     try:
         from fetch_dividends import fetch_all as fetch_dividends_all
         div_summary = fetch_dividends_all()
@@ -212,10 +185,10 @@ def main():
     except Exception as e:
         print(f"  Dividend fetch skipped: {e}")
 
-    # Step 1.6: Sync dividend income from trades to dividends table
+    # Step 1.5: Sync dividend income from trades to dividends table
     # This captures 股息入账 records (e.g., 长江电力 600900) that exist in
     # the trades table but weren't imported into the dividends table
-    print("\n[Step 1.6] Syncing dividend income from trades ...")
+    print("\n[Step 1.5] Syncing dividend income from trades ...")
     try:
         from db_helper import sync_dividends_from_trades
         synced = sync_dividends_from_trades()
@@ -388,7 +361,7 @@ def main():
         # Check last 5 verified predictions in chronological order
         recent_5 = list(reversed(verified[:5])) if len(verified) >= 5 else []
         if len(recent_5) >= 5 and all(v['dir_hit'] == 0 for v in recent_5):
-            print(f"  ⚠️  {stock['name']}({code}): 5 consecutive misses! "
+            print(f"  [WARN] {stock['name']}({code}): 5 consecutive misses! "
                   f"Resetting learning params to baseline.")
             try:
                 upsert_learning_params(code, new_lp())

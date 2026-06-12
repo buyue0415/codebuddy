@@ -50,6 +50,67 @@ def get_kline_daily(code):
     rows = db.execute("SELECT date, open, close, high, low FROM kline_daily WHERE code=? ORDER BY date DESC", [code]).fetchall()
     return [[r['date'], r['open'], r['close'], r['high'], r['low']] for r in rows]
 
+
+def get_quotes_by_date(date_str: str) -> dict:
+    """Return quotes-like data for a specific historical date.
+    
+    For each watchlist stock, fetches daily K-line data for the given date:
+      - price: close price of that day
+      - change: close relative to previous trading day
+      - open, high, low: from that day's K-line
+      - volume: from that day's K-line
+      - pe, pb: from kline_daily (0 if not available)
+      - dy: calculated as TTM dividend yield using the date's close price
+    
+    Returns dict in same format as get_quotes(): {code: {...}}.
+    """
+    _ensure_kline_daily_schema()
+    db = get_db()
+    try:
+        codes = [r['code'] for r in db.execute("SELECT code FROM watchlist").fetchall()]
+        if not codes:
+            return {}
+        
+        result = {}
+        for code in codes:
+            row = db.execute(
+                "SELECT date, open, close, high, low, COALESCE(volume, 0) as volume, "
+                "COALESCE(pe, 0) as pe, COALESCE(pb, 0) as pb, COALESCE(dy, 0) as dy "
+                "FROM kline_daily WHERE code=? AND date=? LIMIT 1",
+                [code, date_str]
+            ).fetchone()
+            if not row:
+                continue
+            
+            # Previous day's close for change calculation
+            prev = db.execute(
+                "SELECT close FROM kline_daily WHERE code=? AND date<? "
+                "ORDER BY date DESC LIMIT 1",
+                [code, date_str]
+            ).fetchone()
+            
+            price = row['close']
+            prev_close = prev['close'] if prev else price
+            change = round(price - prev_close, 2) if prev_close else 0
+            
+            # Calculate DY from TTM dividends at this date's price
+            dy = _calc_dy_at_date(db, code, price, date_str)
+            
+            result[code] = {
+                'price': price,
+                'change': change,
+                'open': row['open'],
+                'high': row['high'],
+                'low': row['low'],
+                'volume': row['volume'],
+                'pe': row['pe'],
+                'pb': row['pb'],
+                'dy': dy,
+            }
+        return result
+    finally:
+        db.close()
+
 def get_kline_monthly(code):
     db = get_db()
     rows = db.execute(
@@ -64,7 +125,7 @@ def get_kline_monthly(code):
 def get_quotes():
     db = get_db()
     rows = db.execute("SELECT * FROM quotes").fetchall()
-    return {r['code']: {'price': r['price'], 'change': r['change'], 'open': r['open'], 'high': r['high'], 'low': r['low'], 'pe': r['pe'], 'pb': r['pb'], 'dy': r['dy']} for r in rows}
+    return {r['code']: {'price': r['price'], 'change': r['change'], 'open': r['open'], 'high': r['high'], 'low': r['low'], 'volume': r['volume'] if 'volume' in r.keys() else 0, 'pe': r['pe'], 'pb': r['pb'], 'dy': r['dy']} for r in rows}
 
 
 def get_quotes_batch(db, codes: list) -> dict:
@@ -77,7 +138,8 @@ def get_quotes_batch(db, codes: list) -> dict:
         f"SELECT * FROM quotes WHERE code IN ({placeholders})", codes
     ).fetchall()
     return {r['code']: {'price': r['price'], 'change': r['change'], 'open': r['open'],
-                         'high': r['high'], 'low': r['low'], 'pe': r['pe'], 'pb': r['pb'], 'dy': r['dy']}
+                         'high': r['high'], 'low': r['low'], 'volume': r['volume'] if 'volume' in r.keys() else 0,
+                         'pe': r['pe'], 'pb': r['pb'], 'dy': r['dy']}
             for r in rows}
 
 
@@ -430,6 +492,64 @@ def sync_dividends_from_trades():
     db.close()
     print(f"  [SYNC] Synced {count} dividend records from trades table")
     return count
+
+
+def _calc_dy_at_date(db, code: str, price: float, date_str: str) -> float:
+    """Calculate TTM dividend yield for a stock at a specific historical date.
+    
+    Looks back 365 days from the given date, summing per_share dividends
+    within that window, then divides by the historical close price.
+    Uses ex_date (除权日) for TTM window filtering.
+    Returns percentage value (e.g. 5.23 means 5.23%).
+    """
+    from datetime import datetime, timedelta
+
+    if not price or price <= 0:
+        return 0.0
+
+    try:
+        cutoff = datetime.strptime(date_str[:10], '%Y-%m-%d') - timedelta(days=365)
+        cutoff_str = cutoff.strftime('%Y-%m-%d')
+    except (ValueError, TypeError):
+        return 0.0
+
+    div_rows = db.execute(
+        "SELECT date, amount, price, source, "
+        "COALESCE(ex_date, date(date, '-3 days')) as ex_date "
+        "FROM dividends WHERE code=? AND "
+        "COALESCE(ex_date, date(date, '-3 days')) >= ? AND "
+        "COALESCE(ex_date, date(date, '-3 days')) < ? "
+        "ORDER BY date DESC",
+        [code, cutoff_str, date_str]
+    ).fetchall()
+
+    total_per_share = 0.0
+    dedup_dates = set()
+    for r in div_rows:
+        source = r['source'] if r['source'] else 'statement'
+        amount = float(r['amount']) if r['amount'] else 0.0
+        div_price = float(r['price']) if r['price'] else None
+        ex_date = r['ex_date'] if r['ex_date'] else r['date']
+        ps = _get_dividend_per_share(code, r['date'], amount, div_price, source)
+        if ps <= 0:
+            continue
+        # Dedup: same dividend event within 5 days
+        ex_norm = ex_date[:7]
+        if ex_norm in dedup_dates:
+            # Use the first encountered (highest priority per TTm mode)
+            continue
+        dedup_dates.add(ex_norm)
+        total_per_share += ps
+
+    # Cap total_per_share
+    MAX_TTM_PER_SHARE = 10.0
+    if total_per_share > MAX_TTM_PER_SHARE:
+        total_per_share = MAX_TTM_PER_SHARE
+
+    if total_per_share <= 0:
+        return 0.0
+
+    return round(total_per_share / price * 100, 2)
 
 
 def _get_dividend_per_share(code: str, pay_date: str, amount: float,
@@ -855,11 +975,50 @@ def get_all_learning_params(codes=None):
 
 # ===== Write functions (used by sync scripts) =====
 
-def upsert_kline_daily(code, bars):
-    """Accumulate daily kline — INSERT OR REPLACE prevents duplicates by (code, date)."""
+def _ensure_kline_daily_schema():
+    """Migrate kline_daily table if volume/pe/pb/dy columns missing."""
     db = get_db()
-    db.executemany("INSERT OR REPLACE INTO kline_daily(code,date,open,close,high,low) VALUES(?,?,?,?,?,?)",
-        [[code, b[0], b[1], b[2], b[3], b[4]] for b in bars])
+    try:
+        cols = [r[1] for r in db.execute("PRAGMA table_info(kline_daily)").fetchall()]
+        if 'volume' not in cols:
+            db.execute("ALTER TABLE kline_daily ADD COLUMN volume REAL DEFAULT 0")
+            print("  [MIGRATE] Added 'volume' column to kline_daily table")
+        if 'pe' not in cols:
+            db.execute("ALTER TABLE kline_daily ADD COLUMN pe REAL DEFAULT 0")
+            print("  [MIGRATE] Added 'pe' column to kline_daily table")
+        if 'pb' not in cols:
+            db.execute("ALTER TABLE kline_daily ADD COLUMN pb REAL DEFAULT 0")
+            print("  [MIGRATE] Added 'pb' column to kline_daily table")
+        if 'dy' not in cols:
+            db.execute("ALTER TABLE kline_daily ADD COLUMN dy REAL DEFAULT 0")
+            print("  [MIGRATE] Added 'dy' column to kline_daily table")
+        db.commit()
+    except Exception as e:
+        print(f"  [MIGRATE] kline_daily schema check: {e}")
+    finally:
+        db.close()
+
+def upsert_kline_daily(code, bars):
+    """Accumulate daily kline — INSERT OR REPLACE prevents duplicates by (code, date).
+    bars format: [date, open, close, high, low, volume, pe?, pb?, dy?]
+    pe/pb/dy are stored if available (len >= 9)."""
+    _ensure_kline_daily_schema()
+    db = get_db()
+    cols = "code,date,open,close,high,low,volume"
+    placeholders = "?,?,?,?,?,?,?"
+    params = []
+    for b in bars:
+        p = [code, b[0], b[1], b[2], b[3], b[4], b[5] if len(b) >= 6 else 0]
+        if len(b) >= 9:
+            # Full data with pe/pb/dy
+            cols = "code,date,open,close,high,low,volume,pe,pb,dy"
+            placeholders = "?,?,?,?,?,?,?,?,?,?"
+            p += [b[6], b[7], b[8]]
+        params.append(p)
+    db.executemany(
+        f"INSERT OR REPLACE INTO kline_daily({cols}) VALUES({placeholders})",
+        params
+    )
     db.commit(); db.close()
 
 def upsert_kline_monthly(code, bars):
@@ -870,10 +1029,11 @@ def upsert_kline_monthly(code, bars):
     db.commit(); db.close()
 
 def upsert_quotes(quotes_dict):
+    _ensure_quotes_schema()
     db = get_db()
     for code, q in quotes_dict.items():
-        db.execute("INSERT OR REPLACE INTO quotes(code,price,change,open,high,low,pe,pb,dy) VALUES(?,?,?,?,?,?,?,?,?)",
-            [code, q.get('price'), q.get('change'), q.get('open'), q.get('high'), q.get('low'), q.get('pe'), q.get('pb'), q.get('dy')])
+        db.execute("INSERT OR REPLACE INTO quotes(code,price,change,open,high,low,volume,pe,pb,dy) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            [code, q.get('price'), q.get('change'), q.get('open'), q.get('high'), q.get('low'), q.get('volume', 0), q.get('pe'), q.get('pb'), q.get('dy')])
     db.commit(); db.close()
 
 def upsert_news(news_list, today=None):
@@ -969,6 +1129,20 @@ def upsert_accuracy_stats(code, period, stats):
     db.execute("INSERT OR REPLACE INTO accuracy_stats(code,period,dir_correct,dir_total,dir_rate,range_correct,range_total,range_rate,hourly_stats) VALUES(?,?,?,?,?,?,?,?,?)",
         [code, period, stats.get('direction',{}).get('correct',0), stats.get('direction',{}).get('total',0), stats.get('direction',{}).get('rate',0), stats.get('range',{}).get('correct',0), stats.get('range',{}).get('total',0), stats.get('range',{}).get('rate',0), json.dumps(stats.get('hourly',{}))])
     db.commit(); db.close()
+
+def _ensure_quotes_schema():
+    """Migrate quotes table if volume column missing."""
+    db = get_db()
+    try:
+        cols = [r[1] for r in db.execute("PRAGMA table_info(quotes)").fetchall()]
+        if 'volume' not in cols:
+            db.execute("ALTER TABLE quotes ADD COLUMN volume INTEGER DEFAULT 0")
+            print("  [MIGRATE] Added 'volume' column to quotes table")
+        db.commit()
+    except Exception as e:
+        print(f"  [MIGRATE] quotes schema check: {e}")
+    finally:
+        db.close()
 
 def upsert_positions(current_positions, closed_positions, all_trades):
     """Persist positions/trades/dividends from statement parsing.
@@ -1551,12 +1725,18 @@ def upsert_paper_suggestion(sug):
 def get_intraday_quotes(code: str, date: str = None) -> list:
     """Get intraday minute-level quotes for a stock on a given date.
 
+    Falls back to daily K-line data when no minute-level data exists for a
+    historical date (minute data only kept ~5 trading days by data source).
+    K-line fallback generates 4 key points: open(09:30), high(10:00),
+    low(14:30), close(15:00), with is_kline_fallback=True.
+
     Args:
         code: Stock code
         date: Date string 'YYYY-MM-DD'. Defaults to today.
 
     Returns:
         List of dicts with keys: timestamp, price, change_pct, volume
+        (plus is_kline_fallback=True if generated from daily K-line)
     """
     if date is None:
         from datetime import datetime as _dt
@@ -1569,7 +1749,57 @@ def get_intraday_quotes(code: str, date: str = None) -> list:
             "WHERE code=? AND date(timestamp)=? ORDER BY timestamp ASC",
             [code, date]
         ).fetchall()
-        return [dict(r) for r in rows]
+        if rows:
+            return [dict(r) for r in rows]
+    finally:
+        db.close()
+
+    # ── Fallback: try daily K-line for historical dates ──
+    return _get_kline_intraday_fallback(code, date)
+
+
+def _get_kline_intraday_fallback(code: str, date: str) -> list:
+    """Generate simplified intraday points from daily K-line data.
+
+    Produces 4 timestamped price points:
+      09:30 → open
+      10:00 → high
+      14:30 → low
+      15:00 → close
+
+    Returns empty list if no K-line data exists for that date.
+    """
+    db = get_db()
+    try:
+        row = db.execute(
+            "SELECT open, close, high, low, volume "
+            "FROM kline_daily WHERE code=? AND date=? LIMIT 1",
+            [code, date]
+        ).fetchone()
+        if not row:
+            return []
+        open_p, close_p, high_p, low_p = row['open'], row['close'], row['high'], row['low']
+        volume = row['volume'] or 0
+
+        # Calculate rough change_pct relative to previous day's close
+        prev = db.execute(
+            "SELECT close FROM kline_daily WHERE code=? AND date<? "
+            "ORDER BY date DESC LIMIT 1",
+            [code, date]
+        ).fetchone()
+        prev_close = prev['close'] if prev else open_p
+        chg_pct = round((close_p - prev_close) / prev_close * 100, 2) if prev_close else 0
+
+        return [
+            {'timestamp': f'{date} 09:30:00', 'price': open_p,  'change_pct': chg_pct, 'volume': 0,
+             'is_kline_fallback': True},
+            {'timestamp': f'{date} 10:00:00', 'price': high_p,  'change_pct': chg_pct, 'volume': 0,
+             'is_kline_fallback': True},
+            {'timestamp': f'{date} 14:30:00', 'price': low_p,   'change_pct': chg_pct, 'volume': 0,
+             'is_kline_fallback': True},
+            {'timestamp': f'{date} 15:00:00', 'price': close_p, 'change_pct': chg_pct, 'volume': volume,
+             'is_kline_fallback': True},
+        ]
     finally:
         db.close()
 
@@ -1597,6 +1827,9 @@ def insert_intraday_quotes(rows: list):
 def get_intraday_dates_for_code(code: str, limit: int = 90) -> list:
     """Get list of dates that have intraday data for a stock.
 
+    Includes both actual minute-level data dates and dates where daily K-line
+    fallback is available (e.g. June 3rd, which has K-line but no minute data).
+
     Args:
         code: Stock code
         limit: Max number of dates to return
@@ -1606,12 +1839,25 @@ def get_intraday_dates_for_code(code: str, limit: int = 90) -> list:
     """
     db = get_db()
     try:
-        rows = db.execute(
+        # Minute data dates
+        minute_rows = db.execute(
             "SELECT DISTINCT date(timestamp) as d FROM intraday_quotes "
             "WHERE code=? ORDER BY d DESC LIMIT ?",
             [code, limit]
         ).fetchall()
-        return [r['d'] for r in rows]
+        minute_dates = set(r['d'] for r in minute_rows)
+
+        # Also include dates with kline data (for K-line fallback)
+        kline_rows = db.execute(
+            "SELECT DISTINCT date FROM kline_daily "
+            "WHERE code=? ORDER BY date DESC LIMIT ?",
+            [code, limit * 2]
+        ).fetchall()
+        kline_dates = set(r['date'] for r in kline_rows)
+
+        # Merge and sort desc
+        all_dates = sorted(minute_dates | kline_dates, reverse=True)
+        return all_dates[:limit]
     finally:
         db.close()
 

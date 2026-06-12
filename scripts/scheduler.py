@@ -29,6 +29,21 @@ from datetime import datetime
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PYTHON = r'C:\Users\28312\.workbuddy\binaries\python\versions\3.12.6\python.exe'
+LOCK_FILE = os.path.join(ROOT, 'data', '.sync_lock')
+
+# Lazy import to avoid circular dependency at module level
+_TRADING_DAY_CHECK = None
+def _is_trading_day():
+    global _TRADING_DAY_CHECK
+    if _TRADING_DAY_CHECK is None:
+        try:
+            sys.path.insert(0, os.path.join(ROOT, 'scripts'))
+            from fetch_news import is_trading_day
+            _TRADING_DAY_CHECK = is_trading_day
+        except ImportError:
+            # Fallback: only check weekday if fetch_news not available
+            _TRADING_DAY_CHECK = lambda: datetime.now().weekday() < 5
+    return _TRADING_DAY_CHECK()
 
 def run(name, timeout=60):
     script = os.path.join(ROOT, 'scripts', name)
@@ -56,12 +71,42 @@ def task_sync_all():
     print(f"\n{'='*50}")
     print(f"TASK: sync_all — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*50}")
-    ok = run('sync_all.py', 180)
-    if ok:
-        # Step 2: Auto-execute paper trading (independent script)
-        print(f"\n  → Running paper_trading auto (independent step)")
-        task_paper_trading()
-    return ok
+
+    # Guard 1: Skip non-trading days (weekends & holidays)
+    if not _is_trading_day():
+        print(f"  [SKIP] Today is not a trading day (weekend or holiday).")
+        return True
+
+    # Guard 2: Debounce — skip if sync already running
+    if os.path.exists(LOCK_FILE):
+        print(f"  [SKIP] Sync already running (lock file exists).")
+        return True
+
+    # Create sync lock
+    try:
+        with open(LOCK_FILE, 'w') as f:
+            f.write(datetime.now().isoformat())
+    except Exception as e:
+        print(f"  [WARN] Could not create lock file: {e}")
+
+    try:
+        # Step 0: Collect intraday data first (capture today's minute data before sync)
+        print(f"\n  → Step 0: Collecting intraday data")
+        task_intraday_collect()
+
+        ok = run('sync_all.py', 180)
+        if ok:
+            # Step 2: Auto-execute paper trading (independent step)
+            print(f"\n  → Running paper_trading auto (independent step)")
+            task_paper_trading()
+        return ok
+    finally:
+        # Always clean up lock file
+        try:
+            if os.path.exists(LOCK_FILE):
+                os.remove(LOCK_FILE)
+        except Exception:
+            pass
 
 def task_paper_trading():
     """Run paper trading auto-execute as an independent step."""
@@ -92,13 +137,13 @@ def task_statement_update():
     return False
 
 def task_intraday_collect():
-    """Run intraday data collection (single pass)."""
+    """Run intraday data collection (single pass, backfills last 5 trading days)."""
     print(f"\n{'='*50}")
     print(f"TASK: intraday_collect — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*50}")
     script = os.path.join(ROOT, 'scripts', 'collect_intraday.py')
     try:
-        r = subprocess.run([PYTHON, script, 'once'], cwd=ROOT, capture_output=True, text=True, timeout=60)
+        r = subprocess.run([PYTHON, script, 'backfill', '--days', '5'], cwd=ROOT, capture_output=True, text=True, timeout=120)
         ok = r.returncode == 0
         print(f"  {'OK' if ok else 'FAIL'} intraday_collect")
         if r.stderr.strip(): print(f"  stderr: {r.stderr.strip()[-400:]}")

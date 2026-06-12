@@ -305,6 +305,32 @@ class TestSchemaIntegrity(StockTestBase):
         for field in ['code', 'date', 'open', 'close', 'high', 'low']:
             self.assertIn(field, cols, f"kline_daily missing {field}")
 
+    def test_intraday_quotes_table_exists(self):
+        """intraday_quotes table should exist."""
+        tables = set(
+            r['name'] for r in self.db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        )
+        self.assertIn('intraday_quotes', tables,
+                      "intraday_quotes table should exist for minute-level data")
+
+    def test_intraday_quotes_unique_index(self):
+        """intraday_quotes should have UNIQUE index on (code, timestamp)."""
+        indexes = [
+            r['name'] for r in self.db.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='intraday_quotes'"
+            ).fetchall()
+        ]
+        has_unique = any('idx_iq_code_ts' in idx for idx in indexes)
+        if not has_unique:
+            # Fallback: check pragma index_list
+            unique_idxs = self.db.execute(
+                "PRAGMA index_list('intraday_quotes')"
+            ).fetchall()
+            has_unique = any(r['unique'] for r in unique_idxs)
+        self.assertTrue(has_unique, "intraday_quotes should have unique index on (code, timestamp)")
+
     def test_daily_predictions_has_core_fields(self):
         """daily_predictions should have core prediction fields."""
         cols = [r['name'] for r in self.db.execute("PRAGMA table_info(daily_predictions)").fetchall()]

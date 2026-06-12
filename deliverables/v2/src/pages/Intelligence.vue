@@ -6,13 +6,7 @@
         <div class="tab-bar">
           <button v-for="s in data.watchlist" :key="s.code" class="tab-btn" :class="{ active: activeCode === s.code }" @click="switchStock(s.code)">{{ s.name }}</button>
         </div>
-        <span class="right-actions">
-          <button class="tab-btn refresh-btn" :class="{ 'refresh-running': refreshing }" @click="triggerPredict" :disabled="refreshing">
-            <span class="btn-icon" :class="{ spinning: refreshing }">{{ refreshing ? '⏳' : '🔄' }}</span>
-            <span>{{ refreshing ? '刷新中…' : '刷新' }}</span>
-          </button>
-          <span class="status-text" :class="{ 'status-ok': status === '✅ 完成', 'status-err': status?.startsWith('❌') }">{{ status }}</span>
-        </span>
+        <span class="right-actions"></span>
       </div>
 
       <template v-if="activeCode">
@@ -99,18 +93,15 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useDataStore } from '@/stores/data.js'
-import { fmt, apiCall } from '@/api/client.js'
+import { fmt } from '@/api/client.js'
 
 const data = useDataStore()
 const activeCode = ref('')
 const showSignals = ref(true)
 const predChartCanvas = ref(null)
-const refreshing = ref(false)
-const status = ref('')
 let predChart = null
-let statusTimer = null
 
 const today = new Date().toISOString().substring(0, 10)
 const curPrice = computed(() => data.quotes[activeCode.value]?.price || 0)
@@ -237,23 +228,6 @@ function renderChart() {
   })
 }
 
-async function triggerPredict() {
-  if (refreshing.value) return
-  refreshing.value = true; status.value = '刷新中…'
-  try {
-    const r = await apiCall('POST', '/api/trigger/predict')
-    if (r?.success) {
-      await data.fetchAll()
-      status.value = '✅ 完成'
-    } else {
-      status.value = '❌ ' + (r?.error || '预测失败')
-    }
-  } catch (e) { status.value = '❌ ' + (e.message || '网络错误') }
-  refreshing.value = false
-  if (statusTimer) clearTimeout(statusTimer)
-  statusTimer = setTimeout(() => { status.value = '' }, 3000)
-}
-
 onMounted(async () => {
   if (!data.watchlist.length) await data.fetchAll()
   activeCode.value = data.watchlist[0]?.code || ''
@@ -261,8 +235,6 @@ onMounted(async () => {
   renderChart()
 })
 watch(activeCode, async () => { await nextTick(); renderChart() })
-
-onUnmounted(() => { if (statusTimer) clearTimeout(statusTimer) })
 </script>
 
 <style scoped>
@@ -272,25 +244,7 @@ onUnmounted(() => { if (statusTimer) clearTimeout(statusTimer) })
 @keyframes spin { to { transform: rotate(360deg); } }
 .top-bar { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
 .top-bar .tab-bar { margin-bottom: 0; flex: 1; }
-.right-actions { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
-.status-text { font-size: 11px; color: #6b7280; transition: color 0.3s; }
-.status-text.status-ok { color: #059669; }
-.status-text.status-err { color: #dc2626; }
 .top-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
-.refresh-btn {
-  display: inline-flex; align-items: center; gap: 6px;
-  transition: all 0.25s ease;
-}
-.refresh-btn:disabled { opacity: 0.7; cursor: not-allowed; }
-.refresh-btn:not(:disabled):hover {
-  background: #dbeafe; border-color: #93c5fd; transform: translateY(-1px);
-  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.15);
-}
-.refresh-btn:not(:disabled):active { transform: translateY(0); }
-.refresh-running { background: #eff6ff; border-color: #60a5fa; color: #2563eb; }
-.btn-icon { display: inline-block; font-size: 14px; line-height: 1; }
-.btn-icon.spinning { animation: btnSpin 1s linear infinite; }
-@keyframes btnSpin { to { transform: rotate(360deg); } }
 @media (max-width: 800px) { .top-grid { grid-template-columns: 1fr; } }
 .dp-card { background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
 .dp-card h3 { font-size: 14px; color: #6b7280; margin-bottom: 8px; font-weight: 500; }

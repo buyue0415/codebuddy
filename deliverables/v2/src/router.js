@@ -37,6 +37,11 @@ const routes = [
     component: () => import('@/pages/News.vue'),
   },
   {
+    path: '/stock-data',
+    name: 'stock-data',
+    component: () => import('@/pages/StockData.vue'),
+  },
+  {
     path: '/kline',
     name: 'kline',
     component: () => import('@/pages/Kline.vue'),

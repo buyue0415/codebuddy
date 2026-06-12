@@ -9,6 +9,7 @@ import { loadAllData, clearCache, apiCall } from '@/api/client.js'
 export const useDataStore = defineStore('data', () => {
   const loading = ref(false)
   const refreshing = ref(false)      // 仅刷新股价的轻量状态
+  const fullRefreshing = ref(false)  // 全量刷新（采集+预测）状态
   const error = ref(null)
   const refreshError = ref(null)     // 刷新按钮的内联错误
   const watchlist = ref([])
@@ -30,6 +31,7 @@ export const useDataStore = defineStore('data', () => {
   const lastRefresh = ref('')
 
   let _refreshTimer = null  // debounce
+  let _fullRefreshTimer = null
 
   async function fetchAll() {
     clearCache()
@@ -89,6 +91,29 @@ export const useDataStore = defineStore('data', () => {
     }
   }
 
+  /** Full refresh: trigger backend full pipeline (sync_all), then reload all data */
+  async function triggerFullRefresh() {
+    if (fullRefreshing.value) return
+    fullRefreshing.value = true
+    refreshError.value = null
+    try {
+      const r = await apiCall('POST', '/api/trigger/predict')
+      if (r?.success) {
+        await fetchAll()
+        if (_fullRefreshTimer) { clearTimeout(_fullRefreshTimer); _fullRefreshTimer = null }
+      } else {
+        refreshError.value = r?.error || '全量刷新失败'
+        fullRefreshing.value = false
+        _fullRefreshTimer = setTimeout(() => { refreshError.value = null }, 4000)
+        return
+      }
+    } catch (e) {
+      refreshError.value = e.message || '网络请求失败'
+      _fullRefreshTimer = setTimeout(() => { refreshError.value = null }, 4000)
+    }
+    fullRefreshing.value = false
+  }
+
   /** Check if a stock's price changed since last fetch */
   function priceChangeDirection(code) {
     const prev = prevQuotes.value[code]?.price
@@ -98,11 +123,11 @@ export const useDataStore = defineStore('data', () => {
   }
 
   return {
-    loading, refreshing, error, refreshError, watchlist, quotes, prevQuotes,
+    loading, refreshing, fullRefreshing, error, refreshError, watchlist, quotes, prevQuotes,
     currentPositions, closedPositions, allTrades, allNews,
     allKlineDaily, allKlineMonthly, seasonal, allDividends, expertReports,
     predictions, accuracyStats, learningParams,
     config, lastRefresh,
-    fetchAll, refreshQuotesAndReload, priceChangeDirection,
+    fetchAll, refreshQuotesAndReload, triggerFullRefresh, priceChangeDirection,
   }
 })

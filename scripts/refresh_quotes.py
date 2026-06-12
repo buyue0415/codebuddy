@@ -36,8 +36,9 @@ def fetch_latest_kline(market_code: str, limit: int = 3) -> list:
         for line in text.strip().split('\n'):
             parts = [p.strip() for p in line.split('|') if p.strip()]
             if len(parts) >= 5 and parts[0][:4].isdigit():
+                volume = float(parts[5]) if len(parts) >= 6 else 0
                 data.append([parts[0], float(parts[1]), float(parts[2]),
-                             float(parts[3]), float(parts[4])])
+                             float(parts[3]), float(parts[4]), volume])
         # Sort newest first
         data.sort(key=lambda x: x[0], reverse=True)
         return data
@@ -213,7 +214,7 @@ def main():
             fail_count += 1
             continue
 
-        latest = bars[0]  # [date, open, close, high, low]
+        latest = bars[0]  # [date, open, close, high, low, volume]
         price = latest[2]  # close price
         prev_close = bars[1][2] if len(bars) > 1 else price
         change = round(price - prev_close, 2) if prev_close else 0
@@ -225,6 +226,7 @@ def main():
             'open': latest[1],
             'high': latest[3],
             'low': latest[4],
+            'volume': latest[5],   # 成交量（手）
             'pe': 0,   # Not available from K-line data alone
             'pb': 0,
             'dy': dy,

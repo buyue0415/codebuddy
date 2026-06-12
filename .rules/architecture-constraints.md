@@ -305,6 +305,8 @@ export async function fetchPaperAccount() {
 | 学习参数 | sync_all.py | `db_helper.upsert_learning_params()` |
 | 准确率 | sync_all.py | `db_helper.upsert_accuracy_stats()` |
 | 行情 | sync_all.py / refresh_quotes.py | `db_helper.upsert_quotes()` |
+| **分钟分时数据** | **collect_intraday.py** | **`db_helper.insert_intraday_quotes()`** |
+| **日K线降级分时数据** | **db_helper._get_kline_intraday_fallback()** | **查询时实时生成** |
 | 虚拟账户 | paper_trading.py [待开发] | `db_helper` 对应函数 |
 | 虚拟交易 | paper_trading.py [待开发] | `db_helper.insert_paper_trade()` |
 | 回测结果 | backtest_engine.py [待开发] | `db_helper.insert_backtest_run()` |

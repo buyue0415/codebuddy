@@ -47,6 +47,10 @@
         </div>
         <button v-if="account?.initialized" class="tab-btn" style="background:#f59e0b;color:#fff;border-color:#f59e0b"
           @click="confirmReset">🔄 重置</button>
+        <button v-if="account?.initialized" class="tab-btn" style="background:#16a34a;color:#fff;border-color:#16a34a;padding:6px 16px"
+          @click="handleExecute" :disabled="execLoading">
+          {{ execLoading ? '执行中...' : '▶ 执行交易' }}
+        </button>
       </div>
 
       <!-- Intraday Chart -->
@@ -80,7 +84,7 @@
             <tr v-for="sug in suggestions" :key="sug.code">
               <td>{{ sug.name || sug.code }}</td>
               <td>{{ sug.code }}</td>
-              <td><span class="sug-table-badge" :class="sug.action">{{ actionText(sug.action) }}</span></td>
+              <td><span class="sug-table-badge" :class="sug.action">{{ actionText(sug) }}</span></td>
               <td :class="dirClass(sug.direction)">{{ dirText(sug.direction) }}</td>
               <td>{{ sug.qty ? sug.qty + '股' : '--' }}</td>
               <td>¥{{ sug.price ? fmt(sug.price) : '--' }}</td>
@@ -129,7 +133,7 @@ import { useDataStore } from '@/stores/data.js'
 
 const store = usePaperStore()
 const { account, positions, suggestions, intradayData, intradayCode, selectedDate, availableDates, marketStatus } = storeToRefs(store)
-const { loadAccount, loadPositions, loadSuggestions, resetAccount, loadIntraday } = store
+const { loadAccount, loadPositions, loadSuggestions, resetAccount, loadIntraday, executeTrading } = store
 
 // Use data store watchlist (all self-selected stocks, not just positions)
 const dataStore = useDataStore()
@@ -138,6 +142,7 @@ const wl = computed(() => dataStore.watchlist || [])
 const loading = ref(false)
 const errorText = ref('')
 const initLoading = ref(false)
+const execLoading = ref(false)
 const intradayCanvas = ref(null)
 const todayStr = new Date().toISOString().slice(0, 10)
 const tradingTitle = computed(() => {
@@ -288,7 +293,7 @@ async function initAccount() {
       errorText.value = '初始化失败: ' + (r?.error || 'API返回异常，请确认后端已启动')
       return
     }
-    // Load suggestions first — they auto-execute trades and create positions
+    // Load suggestions (read-only) and positions after reset
     await loadSuggestions()
     await loadPositions()
   } catch (e) {
@@ -304,13 +309,35 @@ async function confirmReset() {
   errorText.value = ''
   try {
     await resetAccount(100000)
-    // Load suggestions first — they auto-execute trades and create positions
+    // Load suggestions (read-only) and positions after reset
     await loadSuggestions()
     await loadPositions()
   } catch (e) {
     errorText.value = '重置失败: ' + (e.message || '未知错误')
   }
   loading.value = false
+}
+
+async function handleExecute() {
+  execLoading.value = true
+  errorText.value = ''
+  try {
+    const r = await executeTrading()
+    if (!r?.success) {
+      errorText.value = '执行失败: ' + (r?.error || 'API返回异常')
+      return
+    }
+    // Refresh account and positions after execution
+    await Promise.all([loadAccount(), loadPositions()])
+    if (r.message) {
+      errorText.value = '✅ ' + r.message
+      setTimeout(() => { if (errorText.value?.startsWith('✅')) errorText.value = '' }, 5000)
+    }
+  } catch (e) {
+    errorText.value = '执行异常: ' + (e.message || '未知错误')
+  } finally {
+    execLoading.value = false
+  }
 }
 
 function fmt(v) { return v != null ? Number(v).toFixed(2) : '--' }
@@ -329,15 +356,22 @@ function pnlSign(v) { return Number(v) > 0 ? '+' : Number(v) < 0 ? '-' : '' }
 function dirClass(d) { return d === 'bullish' ? 'up' : d === 'bearish' ? 'down' : '' }
 function dirText(d) { return d === 'bullish' ? '看涨 ↑' : d === 'bearish' ? '看跌 ↓' : '中性 →' }
 
-function actionText(a) { return a === 'buy' ? '已买入' : a === 'sell' ? '已卖出' : a === 'watch' ? '关注' : '观望' }
+function actionText(sug) {
+  const a = sug.action || 'hold'
+  const done = sug.executed === 1
+  if (a === 'buy') return done ? '已买入' : '待买入'
+  if (a === 'sell') return done ? '已卖出' : '待卖出'
+  if (a === 'watch') return '关注'
+  return '观望'
+}
 function fmtReason(sug) {
   const r = (sug.reason || '').toLowerCase()
   if (r.includes('no valid market price')) return '暂无有效市价'
   const dirMap = { bullish: '看涨', bearish: '看跌', neutral: '中性' }
   const dt = dirMap[sug.direction] || ''
   const conf = pct(sug.confidence)
-  if (sug.action === 'buy') return `预测${dt}，信心${conf}%，已买入`
-  if (sug.action === 'sell') return `预测${dt}，信心${conf}%，已卖出`
+  if (sug.action === 'buy') return sug.executed === 1 ? `预测${dt}，信心${conf}%，已买入` : `预测${dt}，信心${conf}%，待开市执行`
+  if (sug.action === 'sell') return sug.executed === 1 ? `预测${dt}，信心${conf}%，已卖出` : `预测${dt}，信心${conf}%，待开市执行`
   if (sug.action === 'watch') return `看好${dt}但未达买入条件`
   if (sug.direction === 'neutral' || conf < 50) return '信号不明确，暂观望'
   return `预测${dt}但无持仓，暂无法操作`

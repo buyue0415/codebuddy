@@ -6,6 +6,7 @@ import { ref, computed } from 'vue'
 import {
   fetchPaperAccount, fetchPaperPositions, fetchPaperSuggestions,
   fetchPaperTrades, fetchPaperPerformance, resetPaperAccount,
+  executePaperTrading,
   runBacktest, fetchBacktestStatus, stopBacktest as apiStopBacktest,
   fetchBacktestResults, fetchBacktestHistory,
   fetchIntraday,
@@ -110,6 +111,14 @@ export const usePaperStore = defineStore('paper', () => {
     return r
   }
 
+  async function executeTrading() {
+    const r = await executePaperTrading()
+    if (r?.success) {
+      suggestions.value = r.data || []
+    }
+    return r
+  }
+
   // ── Backtest ──
 
   async function startBacktest(params = {}) {
@@ -161,7 +170,7 @@ export const usePaperStore = defineStore('paper', () => {
     intradayData, intradayCode, selectedDate, availableDates, marketStatus,
     backtestStatus, backtestRunId, backtestProgress, backtestResults, backtestHistory,
     loadAccount, loadPositions, loadSuggestions, loadTrades, loadPerformance,
-    resetAccount, loadIntraday,
+    resetAccount, loadIntraday, executeTrading,
     startBacktest, pollBacktestStatus, stopBacktest, loadBacktestResults, loadBacktestHistory,
   }
 })

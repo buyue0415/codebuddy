@@ -27,13 +27,13 @@ CREATE TABLE stocks (code TEXT PRIMARY KEY, name TEXT NOT NULL, market TEXT, py 
 CREATE INDEX idx_stocks_py ON stocks(py);
 CREATE INDEX idx_stocks_name ON stocks(name);
 
-CREATE TABLE kline_daily (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL, date TEXT NOT NULL, open REAL, close REAL, high REAL, low REAL);
+CREATE TABLE kline_daily (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL, date TEXT NOT NULL, open REAL, close REAL, high REAL, low REAL, volume REAL DEFAULT 0, pe REAL DEFAULT 0, pb REAL DEFAULT 0, dy REAL DEFAULT 0);
 CREATE INDEX idx_kd_code_date ON kline_daily(code, date);
 
 CREATE TABLE kline_monthly (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL, date TEXT NOT NULL, open REAL, high REAL, low REAL, close REAL, volume REAL, change_pct REAL);
 CREATE INDEX idx_km_code_date ON kline_monthly(code, date);
 
-CREATE TABLE quotes (code TEXT PRIMARY KEY, price REAL, change REAL, open REAL, high REAL, low REAL, pe REAL, pb REAL, dy REAL);
+CREATE TABLE quotes (code TEXT PRIMARY KEY, price REAL, change REAL, open REAL, high REAL, low REAL, pe REAL, pb REAL, dy REAL, volume INTEGER DEFAULT 0);
 
 CREATE TABLE daily_predictions (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL, date TEXT NOT NULL, prev_close REAL, direction TEXT, confidence REAL, high REAL, low REAL, advice TEXT, entry_zone REAL, actual_open REAL, actual_high REAL, actual_low REAL, actual_close REAL, dir_hit INTEGER, range_hit INTEGER);
 CREATE INDEX idx_dp_code_date ON daily_predictions(code, date);

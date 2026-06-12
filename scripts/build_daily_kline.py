@@ -26,7 +26,9 @@ def fetch_kline(market_code, limit=200):
     for line in lines:
         parts = [p.strip() for p in line.split('|') if p.strip()]
         if len(parts) >= 5 and re.match(r'\d{4}-\d{2}-\d{2}', parts[0]):
-            data.append([parts[0], float(parts[1]), float(parts[2]), float(parts[3]), float(parts[4])])
+            # parts: date, open, close, high, low, volume (optional)
+            volume = float(parts[5]) if len(parts) >= 6 else 0
+            data.append([parts[0], float(parts[1]), float(parts[2]), float(parts[3]), float(parts[4]), volume])
     return data
 
 def calc_signals(kdata):

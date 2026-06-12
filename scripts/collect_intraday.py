@@ -39,17 +39,23 @@ def market_code(stock_code: str) -> str:
     return f'sh{stock_code}'
 
 
-def fetch_minute_data(mkt_code: str) -> list:
-    """Call westock-data minute to get full day's minute-level OHLC data.
+def fetch_minute_data(mkt_code: str, days: int = None) -> list:
+    """Call westock-data minute to get minute-level OHLC data.
+
+    Supports two modes:
+    - Without days (default): returns today's data only
+      Format: | code | time(HHMM) | price | volume | amount |
+    - With --days N: returns data for last N trading days
+      Format: | code | date(YYYYMMDD) | time(HHMM) | price | volume | amount |
 
     Returns:
         List of dicts: [{timestamp: 'YYYY-MM-DD HH:MM:00', price: float, volume: int}, ...]
     """
     try:
-        result = subprocess.run(
-            [NODE, SCRIPT, 'minute', mkt_code],
-            cwd=WESTOCK, capture_output=True, timeout=30,
-        )
+        cmd = [NODE, SCRIPT, 'minute', mkt_code]
+        if days:
+            cmd.extend(['--days', str(days)])
+        result = subprocess.run(cmd, cwd=WESTOCK, capture_output=True, timeout=30)
         text = ''
         if result.stdout:
             try:
@@ -57,32 +63,37 @@ def fetch_minute_data(mkt_code: str) -> list:
             except (UnicodeDecodeError, LookupError):
                 text = result.stdout.decode('utf-8', errors='replace')
 
-        today = datetime.now().strftime('%Y-%m-%d')
         data = []
         for line in text.strip().split('\n'):
             parts = [p.strip() for p in line.split('|') if p.strip()]
-            # Actual format: | code | time(HHMM) | price | volume | amount |
-            # Example: | sh601166 | 0930 | 18.32 | 5972 | 10940703.56 |
-            # Skip header and separator rows (contain '---' or non-numeric time)
-            if len(parts) >= 4:
-                time_str = parts[1].strip()
-                # Skip header/separator rows
-                if time_str in ('time', '---') or not time_str.isdigit():
-                    continue
-                try:
-                    # Convert HHMM -> HH:MM
-                    hm = f"{time_str[:2]}:{time_str[2:]}"
+            # Skip header and separator rows (contain '---' or non-numeric time/date)
+            if len(parts) < 4:
+                continue
+            time_str = parts[1].strip() if not days else parts[2].strip()
+            if time_str in ('time', '---') or not time_str.isdigit():
+                continue
+            try:
+                hm = f"{time_str[:2]}:{time_str[2:]}"
+                # With --days N: parts = [code, date(YYYYMMDD), time(HHMM), price, volume, amount]
+                # Without --days: parts = [code, time(HHMM), price, volume, amount]
+                if days:
+                    date_str = parts[1].strip()
+                    date_fmt = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
+                    price = float(parts[3])
+                    volume = int(float(parts[4])) if len(parts) > 4 and parts[4] else 0
+                else:
+                    date_fmt = datetime.now().strftime('%Y-%m-%d')
                     price = float(parts[2])
                     volume = int(float(parts[3])) if len(parts) > 3 and parts[3] else 0
-                    timestamp = f"{today} {hm}:00"
-                    data.append({
-                        'timestamp': timestamp,
-                        'price': price,
-                        'change_pct': 0,
-                        'volume': volume,
-                    })
-                except (ValueError, IndexError):
-                    continue
+                timestamp = f"{date_fmt} {hm}:00"
+                data.append({
+                    'timestamp': timestamp,
+                    'price': price,
+                    'change_pct': 0,
+                    'volume': volume,
+                })
+            except (ValueError, IndexError):
+                continue
         return data
     except subprocess.TimeoutExpired:
         print(f"[Intraday] Timeout for {mkt_code}", file=sys.stderr)
@@ -122,6 +133,37 @@ def collect_once():
           f"at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", file=sys.stderr)
 
 
+def collect_backfill(days: int = 30):
+    """Backfill historical intraday data for the last N trading days.
+
+    Uses `westock-data minute --days N` which returns minute data with
+    actual date information embedded in the response.
+    """
+    init_backtest_tables()
+    codes = get_watchlist_codes()
+    if not codes:
+        print("[Intraday] No watchlist stocks. Skipping backfill.", file=sys.stderr)
+        return
+
+    total_new = 0
+    for code in codes:
+        mkt = market_code(code)
+        bars = fetch_minute_data(mkt, days=days)
+        if not bars:
+            print(f"  {code}: no data", file=sys.stderr)
+            continue
+
+        # Assign code to each bar
+        for bar in bars:
+            bar['code'] = code
+        insert_intraday_quotes(bars)
+        total_new += len(bars)
+        print(f"  {code}: {len(bars)} points", file=sys.stderr)
+
+    print(f"[Intraday] Backfill complete: {total_new} points from {len(codes)} stocks "
+          f"(past {days} days)", file=sys.stderr)
+
+
 def collect_loop():
     """Continuously collect intraday data during market hours."""
     print(f"[Intraday] Starting continuous collector (interval={COLLECT_INTERVAL}s)", file=sys.stderr)
@@ -145,11 +187,16 @@ def collect_loop():
 if __name__ == '__main__':
     import argparse
     ap = argparse.ArgumentParser(description='Intraday data collector')
-    ap.add_argument('action', nargs='?', default='loop', choices=['once', 'loop'],
-                    help="'once' for single run, 'loop' for continuous (default)")
+    ap.add_argument('action', nargs='?', default='loop',
+                    choices=['once', 'loop', 'backfill'],
+                    help="'once' for single run, 'loop' for continuous, 'backfill' for historical backfill")
+    ap.add_argument('--days', type=int, default=30,
+                    help="Number of days to backfill (default: 30, only used with 'backfill' action)")
     args = ap.parse_args()
 
     if args.action == 'once':
         collect_once()
+    elif args.action == 'backfill':
+        collect_backfill(days=args.days)
     else:
         collect_loop()

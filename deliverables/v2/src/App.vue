@@ -12,6 +12,15 @@
           @click="switchGroup(g.id)"
         >{{ g.label }}</button>
       </div>
+      <div class="nav-global-actions">
+        <button class="btn-global-refresh" @click="store.triggerFullRefresh()"
+          :disabled="store.fullRefreshing" title="全量数据采集 + 重新计算预测">
+          <span class="refresh-icon" :class="{ spinning: store.fullRefreshing }">&#x21bb;</span>
+          <span>{{ store.fullRefreshing ? '刷新中...' : '全量刷新' }}</span>
+        </button>
+        <span v-if="store.refreshError" class="refresh-err">{{ store.refreshError }}</span>
+        <span v-else-if="store.lastRefresh && !store.fullRefreshing" class="refresh-time">{{ store.lastRefresh }}</span>
+      </div>
     </nav>
 
     <!-- Sub-tab bar for active group -->
@@ -36,9 +45,11 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useDataStore } from '@/stores/data.js'
 
 const route = useRoute()
 const router = useRouter()
+const store = useDataStore()
 
 const navGroups = [
   { id: 'trade',  label: '个人交易数据', items: [
@@ -53,6 +64,7 @@ const navGroups = [
   ]},
   { id: 'info',     label: '股票信息收集', items: [
     { route: '/news', label: '新闻动态' },
+    { route: '/stock-data', label: '股票数据' },
     { route: '/kline', label: 'K线走势' },
     { route: '/pattern-rules', label: '形态规则' },
   ]},
@@ -66,7 +78,7 @@ const navGroups = [
 const routeGroupMap = {
   '/overview': 'trade', '/trades': 'trade', '/fees': 'trade', '/manage': 'trade',
   '/intelligence': 'analysis', '/expert': 'analysis',
-  '/news': 'info', '/kline': 'info', '/pattern-rules': 'info',
+  '/news': 'info', '/stock-data': 'info', '/kline': 'info', '/pattern-rules': 'info',
   '/backtest': 'paper', '/paper': 'paper', '/paper/history': 'paper',
 }
 
@@ -166,5 +178,36 @@ function switchGroup(id) {
   .nav-gtab { padding: 0 10px; font-size: 12px; }
   .nav-sub-bar { padding: 0 12px; }
   .nav-stab { padding: 10px 12px; font-size: 12px; }
+  .btn-global-refresh { font-size: 11px; padding: 3px 8px; }
+  .nav-global-actions { gap: 4px; }
 }
+
+/* ===== Global Refresh Button ===== */
+.nav-global-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-global-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(255,255,255,.12);
+  border: 1px solid rgba(255,255,255,.2);
+  color: #fff;
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all .15s;
+}
+.btn-global-refresh:hover { background: rgba(255,255,255,.2); }
+.btn-global-refresh:disabled { opacity: .5; cursor: not-allowed; }
+.refresh-icon { display: inline-block; font-size: 14px; }
+.refresh-icon.spinning { animation: btnSpin 1s linear infinite; }
+@keyframes btnSpin { to { transform: rotate(360deg); } }
+.refresh-err { font-size: 11px; color: #fca5a5; }
+.refresh-time { font-size: 11px; color: rgba(255,255,255,.5); }
 </style>

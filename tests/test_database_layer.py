@@ -15,13 +15,14 @@ from conftest import StockTestBase, DB_PATH, require_db
 # Known tables in the stock database schema
 # ======================================================================
 EXPECTED_TABLES = [
-    "config", "watchlist",
+    "watchlist",
     "kline_daily", "kline_monthly",
     "quotes", "positions",
     "trades", "dividends",
     "daily_predictions", "seasonal",
     "news", "expert_reports",
     "learning_params", "accuracy_stats",
+    "intraday_quotes",
 ]
 
 
