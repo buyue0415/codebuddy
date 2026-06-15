@@ -200,7 +200,7 @@ function handleFile(e) {
 async function uploadFile(file) {
   uploadStatus.value = '上传中...'
   const form = new FormData()
-  form.append('statement', file)
+  form.append('file', file)
   try {
     const r = await fetch('/api/upload/statement', { method: 'POST', body: form })
     const j = await r.json()

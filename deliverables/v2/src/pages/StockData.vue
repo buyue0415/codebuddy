@@ -512,9 +512,9 @@ onUnmounted(() => {
 }
 .hint-icon:hover::after { opacity: 1; }
 
-/* Color helpers */
-:deep(.up) { color: #16a34a; }
-:deep(.down) { color: #dc2626; }
+/* Color helpers — 红涨绿跌 */
+:deep(.up) { color: #dc2626; }
+:deep(.down) { color: #16a34a; }
 :deep(.flat) { color: #6b7280; }
 
 .empty { text-align: center; padding: 60px; color: #9ca3af; font-size: 14px; }

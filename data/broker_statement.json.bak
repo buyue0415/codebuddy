@@ -6,8 +6,8 @@
       "code": "600036",
       "name": "招商银行",
       "qty": 2500,
-      "total_cost": 97250.0,
-      "avg_cost": 38.9,
+      "total_cost": 96844.8,
+      "avg_cost": 38.7379,
       "realized_pnl": 0.0,
       "dividends": [
         {
@@ -131,14 +131,19 @@
       "code": "601166",
       "name": "兴业银行",
       "qty": 6300,
-      "total_cost": 112811.71,
-      "avg_cost": 17.907,
-      "realized_pnl": -260.97,
+      "total_cost": 109690.38,
+      "avg_cost": 17.4112,
+      "realized_pnl": 14691.48,
       "dividends": [
         {
           "date": "2026-02-05",
           "amount": 226.0,
           "price": 19.38
+        },
+        {
+          "date": "2026-06-11",
+          "amount": 3156.3,
+          "price": 18.79
         }
       ],
       "total_commission": 45.62,
@@ -317,7 +322,7 @@
     "600900": {
       "code": "600900",
       "name": "长江电力",
-      "realized_pnl": 252.43,
+      "realized_pnl": 0.0,
       "dividends_total": 42.0,
       "total_commission": 12.57,
       "total_stamp_tax": 9.57,
@@ -373,7 +378,7 @@
     "601939": {
       "code": "601939",
       "name": "建设银行",
-      "realized_pnl": 482.16,
+      "realized_pnl": 0.0,
       "dividends_total": 0,
       "total_commission": 9.05,
       "total_stamp_tax": 3.84,
@@ -414,7 +419,7 @@
     "601398": {
       "code": "601398",
       "name": "工商银行",
-      "realized_pnl": 997.19,
+      "realized_pnl": 3785.36,
       "dividends_total": 0,
       "total_commission": 31.25,
       "total_stamp_tax": 14.81,
@@ -530,7 +535,7 @@
     "600050": {
       "code": "600050",
       "name": "中国联通",
-      "realized_pnl": 1577.92,
+      "realized_pnl": 0.0,
       "dividends_total": 0,
       "total_commission": 16.24,
       "total_stamp_tax": 22.25,
@@ -1043,12 +1048,24 @@
       "commission": 3.55,
       "stamp_tax": 0.0,
       "settlement": -22625.0
+    },
+    {
+      "date": "2026-06-11",
+      "time": "16:00:00",
+      "code": "601166",
+      "name": "兴业银行",
+      "type": "股息入账",
+      "qty": 0,
+      "price": 18.79,
+      "commission": 0.0,
+      "stamp_tax": 0.0,
+      "settlement": 3156.3
     }
   ],
-  "import_time": "2026-06-03 14:54:34",
+  "import_time": "2026-06-15 11:27:26",
   "stats": {
-    "total_trades": 37,
-    "valid_trades": 37,
+    "total_trades": 38,
+    "valid_trades": 38,
     "current_stocks": 2,
     "closed_stocks": 4,
     "skipped_errors": 1,

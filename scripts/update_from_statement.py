@@ -390,7 +390,7 @@ def main():
 
     # Step 3: 计算持仓
     positions = defaultdict(lambda: {
-        'code': '', 'name': '', 'qty': 0, 'total_cost': 0.0,
+        'code': '', 'name': '', 'qty': 0, 'buy_total': 0.0, 'sell_net': 0.0, 'seq_total': 0.0,
         'trades': [], 'dividends': [], 'realized': 0.0,
         'total_commission': 0.0, 'total_stamp_tax': 0.0, 'total_other_fees': 0.0,
         'transfer_fee': 0.0, 'regulatory_fee': 0.0, 'handling_fee': 0.0,
@@ -411,15 +411,18 @@ def main():
 
         if t['type'] == '证券买入':
             pos['qty'] += int(abs(t['qty']))
-            pos['total_cost'] += abs(t['qty']) * t['price'] + fee
+            pos['buy_total'] += abs(t['qty']) * t['price'] + fee
+            pos['seq_total'] += abs(t['qty']) * t['price'] + fee
             pos['trades'].append(t)
         elif t['type'] == '证券卖出':
             sell_qty = int(abs(t['qty']))
-            if pos['qty'] > 0 and pos['total_cost'] > 0:
-                avg_cost = pos['total_cost'] / pos['qty']
+            # 已实现盈亏: 用顺序平均法
+            if pos['qty'] > 0 and pos['seq_total'] > 0:
+                avg_cost = pos['seq_total'] / pos['qty']
                 sell_cost = avg_cost * sell_qty
-                pos['total_cost'] -= sell_cost
+                pos['seq_total'] -= sell_cost
                 pos['realized'] += abs(t['qty']) * t['price'] - fee - sell_cost
+            pos['sell_net'] += abs(t['qty']) * t['price'] - fee
             pos['qty'] -= sell_qty
             pos['trades'].append(t)
         elif t['type'] == '股息入账':
@@ -427,15 +430,17 @@ def main():
                 'date': t['date'], 'amount': t['settlement'], 'price': t['price'],
             })
 
-    # Step 4: 构建输出结构
+    # Step 4: 按券商公式计算持仓成本(含费买入 - 卖出净收入 - 股息)
     current = {}
     for code, pos in positions.items():
         if pos['qty'] <= 0:
             continue
+        div_total = sum(d['amount'] for d in pos['dividends'])
+        actual_cost = max(pos['buy_total'] - pos['sell_net'] - div_total, 0)
         current[code] = {
             'code': code, 'name': pos['name'], 'qty': pos['qty'],
-            'total_cost': round(pos['total_cost'], 2),
-            'avg_cost': round(pos['total_cost'] / pos['qty'], 3) if pos['qty'] > 0 else 0,
+            'total_cost': round(actual_cost, 2),
+            'avg_cost': round(actual_cost / pos['qty'], 4) if pos['qty'] > 0 else 0,
             'realized_pnl': round(pos['realized'], 2),
             'dividends': [{'date': d['date'], 'amount': round(d['amount'], 2),
                           'price': round(d['price'], 2)} for d in pos['dividends']],
