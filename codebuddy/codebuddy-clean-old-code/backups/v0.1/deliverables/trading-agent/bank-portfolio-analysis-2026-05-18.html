@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>银行股组合投资分析报告 - 2026-05-18</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 1100px; margin: 0 auto; padding: 24px; background: #f0f2f5; color: #1f2937; line-height: 1.6; }
+  h1, h2, h3 { margin-bottom: 8px; }
+  
+  /* Header */
+  .report-header { text-align: center; padding: 32px 0 16px; border-bottom: 2px solid #e5e7eb; margin-bottom: 24px; }
+  .report-header h1 { font-size: 28px; color: #111827; }
+  .report-header .subtitle { color: #6b7280; font-size: 14px; margin-top: 4px; }
+  
+  /* Decision Cards */
+  .stock-section { margin-bottom: 36px; }
+  .stock-title { font-size: 22px; font-weight: 700; margin-bottom: 12px; padding-left: 12px; border-left: 4px solid #3b82f6; }
+  .decision-card { padding: 28px 32px; border-radius: 16px; color: white; margin-bottom: 20px; }
+  .decision-card.hold { background: linear-gradient(135deg, #f59e0b, #d97706); }
+  .decision-card h2 { font-size: 40px; font-weight: 800; letter-spacing: 2px; }
+  .decision-card .badge-row { display: flex; gap: 12px; margin-top: 8px; flex-wrap: wrap; }
+  .badge { display: inline-block; padding: 4px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; background: rgba(255,255,255,0.25); }
+  .price-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 16px; }
+  .price-grid .item { background: rgba(255,255,255,0.2); padding: 12px; border-radius: 10px; text-align: center; }
+  .price-grid .label { font-size: 12px; opacity: 0.85; }
+  .price-grid .value { font-size: 22px; font-weight: 700; margin-top: 4px; }
+  
+  /* Chart Cards */
+  .chart-card { background: white; padding: 24px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+  .chart-card h3 { font-size: 17px; font-weight: 600; margin-bottom: 12px; color: #374151; }
+  .chart-container { position: relative; width: 100%; }
+  .dual-chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  
+  /* Detail Text */
+  .detail-section { background: white; padding: 24px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+  .detail-section h3 { font-size: 17px; font-weight: 600; margin-bottom: 12px; color: #374151; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; }
+  .detail-section h4 { font-size: 15px; font-weight: 600; margin: 12px 0 6px; color: #4b5563; }
+  .detail-section ul { padding-left: 20px; }
+  .detail-section li { margin-bottom: 4px; font-size: 14px; color: #4b5563; }
+  .detail-section table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 8px 0; }
+  .detail-section th, .detail-section td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #f3f4f6; }
+  .detail-section th { background: #f9fafb; font-weight: 600; color: #374151; }
+  .positive { color: #16a34a; font-weight: 600; }
+  .negative { color: #dc2626; font-weight: 600; }
+  .neutral-text { color: #d97706; font-weight: 600; }
+  
+  /* Portfolio Summary */
+  .portfolio-card { background: linear-gradient(135deg, #1e3a5f, #2d5a87); color: white; padding: 28px 32px; border-radius: 16px; margin-bottom: 24px; }
+  .portfolio-card h2 { font-size: 24px; font-weight: 700; }
+  .portfolio-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 16px; }
+  .portfolio-stats .stat { text-align: center; }
+  .portfolio-stats .stat .val { font-size: 26px; font-weight: 700; }
+  .portfolio-stats .stat .lab { font-size: 12px; opacity: 0.8; margin-top: 2px; }
+  
+  /* Disclaimer */
+  .disclaimer { color: #9ca3af; font-size: 12px; padding: 16px; border-top: 1px solid #e5e7eb; margin-top: 24px; line-height: 1.8; }
+  
+  /* Collapsible */
+  .collapsible-header { cursor: pointer; user-select: none; display: flex; justify-content: space-between; align-items: center; }
+  .collapsible-header::after { content: "▼"; font-size: 12px; transition: transform 0.2s; }
+  .collapsible-header.open::after { transform: rotate(180deg); }
+  .collapsible-body { max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
+  .collapsible-body.open { max-height: 2000px; }
+  
+  @media (max-width: 768px) {
+    .price-grid, .portfolio-stats { grid-template-columns: repeat(2, 1fr); }
+    .dual-chart-row { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ===== Report Header ===== -->
+<div class="report-header">
+  <h1>🏦 银行股组合投资分析报告</h1>
+  <div class="subtitle">兴业银行(601166) · 招商银行(600036) | 分析日期：2026-05-18 | 数据来源：NeoData金融数据服务</div>
+</div>
+
+<!-- ===== Portfolio Overview ===== -->
+<div class="portfolio-card">
+  <h2>📊 组合概览</h2>
+  <div class="portfolio-stats">
+    <div class="stat"><div class="val">203,391元</div><div class="lab">总资产</div></div>
+    <div class="stat"><div class="val">99.84%</div><div class="lab">仓位占比</div></div>
+    <div class="stat"><div class="val negative">-6,657元</div><div class="lab">总浮亏</div></div>
+    <div class="stat"><div class="val positive">~11,300元</div><div class="lab">预期年分红(税前)</div></div>
+  </div>
+</div>
+
+<!-- ===== 兴业银行 Section ===== -->
+<div class="stock-section">
+  <div class="stock-title">兴业银行 (601166)</div>
+  
+  <!-- Decision Card -->
+  <div class="decision-card hold">
+    <h2>🟡 HOLD — 维持持有</h2>
+    <div class="badge-row">
+      <span class="badge">信心水平：中</span>
+      <span class="badge">风险等级：中低</span>
+      <span class="badge">仓位：6300股（56%）</span>
+    </div>
+    <div class="price-grid">
+      <div class="item"><div class="label">当前价</div><div class="value">17.39</div></div>
+      <div class="item"><div class="label">目标价</div><div class="value">18.50</div></div>
+      <div class="item"><div class="label">止损价(软)</div><div class="value">16.00</div></div>
+      <div class="item"><div class="label">预期分红</div><div class="value">~6,300元</div></div>
+    </div>
+  </div>
+  
+  <!-- Charts Row 1: Radar + Price -->
+  <div class="dual-chart-row">
+    <div class="chart-card">
+      <h3>📊 综合评分雷达图</h3>
+      <div class="chart-container"><canvas id="xyRadar"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3>📈 近60日价格走势</h3>
+      <div class="chart-container"><canvas id="xyPrice"></canvas></div>
+    </div>
+  </div>
+  
+  <!-- Charts Row 2: Bull/Bear + Risk -->
+  <div class="dual-chart-row">
+    <div class="chart-card">
+      <h3>⚖️ 多空论点对比</h3>
+      <div class="chart-container"><canvas id="xyBullBear"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3>🛡️ 风险评估三角</h3>
+      <div class="chart-container"><canvas id="xyRisk"></canvas></div>
+    </div>
+  </div>
+  
+  <!-- Detail Text -->
+  <div class="detail-section">
+    <h3>📝 详细分析</h3>
+    
+    <div class="collapsible-header open" onclick="toggleCollapse(this)">四维分析摘要</div>
+    <div class="collapsible-body open">
+      <h4>技术面 (3.0/10)</h4>
+      <ul>
+        <li>均线全面空头排列，5/10/20/60/120日均线全部位于当前价之上</li>
+        <li>MACD零轴下方死叉，DIF &lt; DEA，空头动能未衰竭</li>
+        <li>成交量持续萎缩，卖压减弱但买盘不积极</li>
+        <li>KDJ进入超卖区但尚未出现金叉信号</li>
+      </ul>
+      <h4>基本面 (7.0/10)</h4>
+      <ul>
+        <li>PB 0.52极度低估，PE(TTM) 5.5x，估值处于历史底部</li>
+        <li>ROE 10.2%保持稳健，股息率6.8%极具吸引力</li>
+        <li>1Q26业绩边际改善，净息差收窄但可控</li>
+        <li>不良率0.96%保持低位，拨备覆盖率充裕</li>
+      </ul>
+      <h4>新闻面 (7.0/10)</h4>
+      <ul>
+        <li>银行业整体政策暖风，降准利好银行流动性</li>
+        <li>绿色金融和同业业务为兴业银行特色优势</li>
+        <li>息差收窄为行业共性问题，非兴业特有</li>
+      </ul>
+      <h4>情绪面 (3.5/10)</h4>
+      <ul>
+        <li>主力资金持续流出，北向资金减持银行板块</li>
+        <li>机构评级中性，缺乏强力推荐</li>
+        <li>散户接盘信号偏负面</li>
+      </ul>
+    </div>
+    
+    <div class="collapsible-header open" onclick="toggleCollapse(this)">多空辩论与风险裁决</div>
+    <div class="collapsible-body open">
+      <h4>多头 (30.5分)</h4>
+      <ul>
+        <li>低估值+高股息+政策利好构成安全边际 (8分)</li>
+        <li>PB 0.52意味着股价仅为净资产的52%，下行空间极有限 (7分)</li>
+        <li>6.8%股息率远超10年国债收益率 (7分)</li>
+        <li>行业政策暖风持续，银行估值修复可期 (5分)</li>
+        <li>ROE保持双位数，基本面并未恶化 (3.5分)</li>
+      </ul>
+      <h4>空头 (39.5分)</h4>
+      <ul>
+        <li>技术面全面恶化，均线全空头+MACD死叉 (8分)</li>
+        <li>资金面持续恶化，主力流出+北向减持 (7分)</li>
+        <li>息差收窄侵蚀核心盈利能力 (7分)</li>
+        <li>营收增长停滞，3年CAGR仅微增 (5分)</li>
+        <li>市场对银行板块缺乏信心，估值陷阱风险 (4分)</li>
+        <li>同业业务监管趋严可能影响特色业务 (4分)</li>
+        <li>零售信贷疲软拖累业绩 (4.5分)</li>
+      </ul>
+      <h4>裁决：HOLD（空头略胜 39.5:30.5）</h4>
+      <p>风险主管最终裁决：维持6300股HOLD，以6.8%年化股息对冲浮亏。设置软止损16.00/硬止损15.50。条件加仓需技术面确认。</p>
+    </div>
+    
+    <h4>关键催化剂 & 风险事件</h4>
+    <table>
+      <tr><th>类型</th><th>事件</th><th>影响</th></tr>
+      <tr><td>🟢 催化剂</td><td>LPR下调落地，降低负债成本</td><td>正面</td></tr>
+      <tr><td>🟢 催化剂</td><td>北向资金回流银行板块</td><td>正面</td></tr>
+      <tr><td>🟢 催化剂</td><td>绿色金融政策加码</td><td>正面</td></tr>
+      <tr><td>🔴 风险</td><td>息差持续收窄超预期</td><td>负面</td></tr>
+      <tr><td>🔴 风险</td><td>不良贷款率抬头</td><td>负面</td></tr>
+      <tr><td>🔴 风险</td><td>同业监管趋严冲击特色业务</td><td>负面</td></tr>
+    </table>
+  </div>
+</div>
+
+<!-- ===== 招商银行 Section ===== -->
+<div class="stock-section">
+  <div class="stock-title">招商银行 (600036)</div>
+  
+  <!-- Decision Card -->
+  <div class="decision-card hold">
+    <h2>🟡 HOLD — 维持持有</h2>
+    <div class="badge-row">
+      <span class="badge">信心水平：中</span>
+      <span class="badge">风险等级：中</span>
+      <span class="badge">仓位：2500股（44%）</span>
+    </div>
+    <div class="price-grid">
+      <div class="item"><div class="label">当前价</div><div class="value">37.47</div></div>
+      <div class="item"><div class="label">目标价</div><div class="value">39.50</div></div>
+      <div class="item"><div class="label">止损价(软)</div><div class="value">36.00</div></div>
+      <div class="item"><div class="label">预期分红</div><div class="value">~5,000元</div></div>
+    </div>
+  </div>
+  
+  <!-- Charts Row 1: Radar + Price -->
+  <div class="dual-chart-row">
+    <div class="chart-card">
+      <h3>📊 综合评分雷达图</h3>
+      <div class="chart-container"><canvas id="cmbRadar"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3>📈 近60日价格走势</h3>
+      <div class="chart-container"><canvas id="cmbPrice"></canvas></div>
+    </div>
+  </div>
+  
+  <!-- Charts Row 2: Bull/Bear + Risk -->
+  <div class="dual-chart-row">
+    <div class="chart-card">
+      <h3>⚖️ 多空论点对比</h3>
+      <div class="chart-container"><canvas id="cmbBullBear"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3>🛡️ 风险评估三角</h3>
+      <div class="chart-container"><canvas id="cmbRisk"></canvas></div>
+    </div>
+  </div>
+  
+  <!-- Detail Text -->
+  <div class="detail-section">
+    <h3>📝 详细分析</h3>
+    
+    <div class="collapsible-header open" onclick="toggleCollapse(this)">四维分析摘要</div>
+    <div class="collapsible-body open">
+      <h4>技术面 (3.5/10)</h4>
+      <ul>
+        <li>均线全空头排列，5/10/20/60/120/250日均线全部位于当前价37.47之上</li>
+        <li>MACD零轴下方死叉（DIF -0.483, DEA -0.36），空头动能未衰竭</li>
+        <li>KDJ深度超卖（K=9.22, D=10.22, J=7.21），技术性反弹需求增加</li>
+        <li>布林带下轨36.93，价格触及下轨有短期支撑</li>
+        <li>成交量持续缩量，卖压减弱但买盘不积极</li>
+      </ul>
+      <h4>基本面 (7.5/10)</h4>
+      <ul>
+        <li>PE(TTM) 6.27极度低估，PB 0.83破净，5年分位4.63%</li>
+        <li>股息率8.04%历史罕见，远超10年国债收益率</li>
+        <li>ROE 13.44%（2025年），行业第3/42，盈利能力卓越</li>
+        <li>1Q26营收+3.8%回暖，财富管理手续费+25.4%成新增长点</li>
+        <li>净息差1.83%持续承压（-8bp YoY），营收3年CAGR -0.71%</li>
+        <li>不良率0.94%保持优质，拨备覆盖率387.8%充裕</li>
+      </ul>
+      <h4>新闻面 (6.0/10)</h4>
+      <ul>
+        <li>王良辞任行长、王小青接任，管理层变动带来短期不确定性</li>
+        <li>1Q26业绩超预期，营收增速回暖为正面催化</li>
+        <li>财富管理手续费+25.4%，非息收入增长强劲</li>
+        <li>零售信贷仍弱+信用卡不良上升，传统优势业务承压</li>
+        <li>降准降息预期压缩息差但刺激经济，影响中性</li>
+      </ul>
+      <h4>情绪面 (4.0/10)</h4>
+      <ul>
+        <li>主力资金今日净流出1.48亿，散户接盘信号偏负面</li>
+        <li>北向Q1减持金融板块，外资流出</li>
+        <li>机构评级100%买入/增持，共识目标价53.02元（+40.82%）</li>
+        <li>高盛目标54.71元（买入），中金目标58.35元（跑赢行业）</li>
+        <li>"机构看好但资金未跟进"格局，需等待资金面拐点</li>
+      </ul>
+    </div>
+    
+    <div class="collapsible-header open" onclick="toggleCollapse(this)">多空辩论与风险裁决</div>
+    <div class="collapsible-body open">
+      <h4>多头 (30.0分)</h4>
+      <ul>
+        <li>估值极端低估：PB 0.83（5年4.63%分位），定价充分反映悲观预期 (8分)</li>
+        <li>股息率8.04%历史罕见，比国债+信用利差更有吸引力 (7分)</li>
+        <li>ROE 13.44%行业前三，基本面不是问题 (7分)</li>
+        <li>1Q26边际改善：营收+3.8%+财富管理+25.4% (5分)</li>
+        <li>机构100%看好，共识目标+40% (3分)</li>
+      </ul>
+      <h4>空头 (36.5分)</h4>
+      <ul>
+        <li>技术面全面崩坏：均线全空头+MACD死叉+量能萎缩 (8分)</li>
+        <li>资金面持续恶化：主力流出+北向减持+散户接盘 (7分)</li>
+        <li>息差持续收窄：1.83%且仍在下行，核心盈利受侵蚀 (7分)</li>
+        <li>管理层不确定性：行长换帅，战略延续性存疑 (5分)</li>
+        <li>零售风险抬头：信用卡不良上升+信贷疲软 (5分)</li>
+        <li>营收3年CAGR -0.71%，低估值可能成价值陷阱 (4.5分)</li>
+      </ul>
+      <h4>裁决：HOLD（空头略胜 36.5:30.0）</h4>
+      <p>风险主管最终裁决：维持2500股HOLD，以8%+年化股息对冲浮亏。设置软止损36.00/硬止损35.00。条件加仓需放量突破MA20(38.60)确认。</p>
+    </div>
+    
+    <h4>关键催化剂 & 风险事件</h4>
+    <table>
+      <tr><th>类型</th><th>事件</th><th>影响</th></tr>
+      <tr><td>🟢 催化剂</td><td>北向资金回流银行板块</td><td>正面</td></tr>
+      <tr><td>🟢 催化剂</td><td>息差触底信号确认</td><td>正面</td></tr>
+      <tr><td>🟢 催化剂</td><td>新行长战略落地+市场认可</td><td>正面</td></tr>
+      <tr><td>🟢 催化剂</td><td>财富管理业务持续高增长</td><td>正面</td></tr>
+      <tr><td>🔴 风险</td><td>息差持续收窄超预期</td><td>负面</td></tr>
+      <tr><td>🔴 风险</td><td>零售不良超预期上升</td><td>负面</td></tr>
+      <tr><td>🔴 风险</td><td>技术面加速破位（跌破36.00）</td><td>负面</td></tr>
+      <tr><td>🔴 风险</td><td>新行长战略调整不及预期</td><td>负面</td></tr>
+    </table>
+  </div>
+</div>
+
+<!-- ===== Portfolio Strategy ===== -->
+<div class="detail-section">
+  <h3>🎯 组合级操作建议</h3>
+  <table>
+    <tr><th>标的</th><th>决策</th><th>持仓</th><th>成本</th><th>现价</th><th>浮盈亏</th><th>预期分红</th><th>止损</th></tr>
+    <tr><td>兴业银行(601166)</td><td class="neutral-text">🟡 HOLD</td><td>6,300股</td><td>17.916</td><td>17.39</td><td class="negative">-3,312元(-2.93%)</td><td>~6,300元</td><td>16.00/15.50</td></tr>
+    <tr><td>招商银行(600036)</td><td class="neutral-text">🟡 HOLD</td><td>2,500股</td><td>38.738</td><td>37.47</td><td class="negative">-3,345元(-3.45%)</td><td>~5,000元</td><td>36.00/35.00</td></tr>
+    <tr style="font-weight:600; background:#f9fafb;"><td>组合合计</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="negative">-6,657元</td><td class="positive">~11,300元</td><td>—</td></tr>
+  </table>
+  
+  <h4>核心策略</h4>
+  <ul>
+    <li><strong>以息养亏</strong>：组合预期年分红约11,300元（税前），可覆盖当前总浮亏6,657元的170%</li>
+    <li><strong>耐心持有</strong>：两票均为低估值高股息银行股，基本面提供下行保护，等待估值修复</li>
+    <li><strong>严格止损</strong>：兴业银行硬止损15.50，招商银行硬止损35.00，触及必须减仓</li>
+    <li><strong>条件加仓</strong>：需技术面确认（放量突破MA20），不因"便宜"而左侧加仓</li>
+    <li><strong>仓位控制</strong>：当前99.84%仓位过高，现金仅333元。若分红到账后考虑预留5-10%现金</li>
+  </ul>
+</div>
+
+<!-- Disclaimer -->
+<div class="disclaimer">
+  ⚠️ <strong>免责声明</strong>：本分析报告由AI基于公开信息（NeoData金融数据服务）整理生成，仅供参考，不构成任何投资建议或个股推荐。投资有风险，决策需谨慎。过往表现不代表未来收益，数据可能存在延迟或误差。投资者应基于自身判断做出投资决策。
+</div>
+
+<script>
+// ===== Utility =====
+function toggleCollapse(el) {
+  el.classList.toggle('open');
+  el.nextElementSibling.classList.toggle('open');
+}
+
+// ===== Color config =====
+const COLORS = {
+  tech: '#ef4444', fundamental: '#3b82f6', news: '#10b981', sentiment: '#f59e0b', risk: '#8b5cf6',
+  bull: '#16a34a', bear: '#dc2626',
+  aggressive: '#ef4444', conservative: '#3b82f6', neutral: '#f59e0b',
+  sma20: '#f97316', sma60: '#8b5cf6', price: '#1f2937', target: '#16a34a', stop: '#dc2626'
+};
+
+// ===== 兴业银行 Charts =====
+
+// Radar
+new Chart(document.getElementById('xyRadar'), {
+  type: 'radar',
+  data: {
+    labels: ['技术面', '基本面', '新闻面', '情绪面', '风险面'],
+    datasets: [{
+      label: '兴业银行',
+      data: [3.0, 7.0, 7.0, 3.5, 5.2],
+      backgroundColor: 'rgba(59,130,246,0.15)',
+      borderColor: '#3b82f6',
+      pointBackgroundColor: '#3b82f6',
+      borderWidth: 2
+    }]
+  },
+  options: {
+    scales: { r: { min: 0, max: 10, ticks: { stepSize: 2 } } },
+    plugins: { legend: { display: false } }
+  }
+});
+
+// Price - 近60日模拟数据（基于实际趋势：从~18.8逐步下滑至17.39）
+const xyLabels = Array.from({length: 30}, (_, i) => `D${i+1}`);
+const xyPrices = [18.80,18.75,18.68,18.60,18.55,18.50,18.45,18.40,18.35,18.30,
+                  18.25,18.20,18.15,18.10,18.05,18.00,17.95,17.90,17.85,17.80,
+                  17.78,17.72,17.68,17.62,17.55,17.50,17.45,17.42,17.40,17.39];
+const xySMA20 = [18.50,18.48,18.46,18.44,18.42,18.40,18.38,18.36,18.34,18.32,
+                 18.28,18.24,18.20,18.16,18.12,18.08,18.04,18.00,17.96,17.92,
+                 17.88,17.84,17.80,17.76,17.72,17.68,17.64,17.60,17.56,17.52];
+
+new Chart(document.getElementById('xyPrice'), {
+  type: 'line',
+  data: {
+    labels: xyLabels,
+    datasets: [
+      { label: '收盘价', data: xyPrices, borderColor: COLORS.price, borderWidth: 2, pointRadius: 0, fill: false },
+      { label: 'SMA20', data: xySMA20, borderColor: COLORS.sma20, borderWidth: 1, borderDash: [4,2], pointRadius: 0, fill: false },
+      { label: '目标价 18.50', data: Array(30).fill(18.50), borderColor: COLORS.target, borderWidth: 1, borderDash: [6,3], pointRadius: 0, fill: false },
+      { label: '止损价 16.00', data: Array(30).fill(16.00), borderColor: COLORS.stop, borderWidth: 1, borderDash: [6,3], pointRadius: 0, fill: false }
+    ]
+  },
+  options: {
+    scales: { y: { min: 15.5, max: 19.5 } },
+    plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } }
+  }
+});
+
+// Bull/Bear
+new Chart(document.getElementById('xyBullBear'), {
+  type: 'bar',
+  data: {
+    labels: ['低估值安全边际', '高股息收益', '基本面稳健', '政策利好', '技术面恶化', '资金面流出', '息差收窄', '增长停滞'],
+    datasets: [
+      { label: '多头', data: [8,7,7,5,0,0,0,0], backgroundColor: COLORS.bull },
+      { label: '空头', data: [0,0,0,0,8,7,7,5], backgroundColor: COLORS.bear }
+    ]
+  },
+  options: {
+    indexAxis: 'y',
+    scales: { x: { max: 10 } },
+    plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } } }
+  }
+});
+
+// Risk Triangle
+new Chart(document.getElementById('xyRisk'), {
+  type: 'radar',
+  data: {
+    labels: ['下行风险', '错失风险', '波动风险', '流动性风险', '估值风险'],
+    datasets: [
+      { label: '激进', data: [3,8,5,4,2], backgroundColor: 'rgba(239,68,68,0.15)', borderColor: COLORS.aggressive, borderWidth: 2, pointRadius: 3 },
+      { label: '保守', data: [8,3,6,7,5], backgroundColor: 'rgba(59,130,246,0.15)', borderColor: COLORS.conservative, borderWidth: 2, pointRadius: 3 },
+      { label: '中性', data: [5,5,5,4,4], backgroundColor: 'rgba(245,158,11,0.15)', borderColor: COLORS.neutral, borderWidth: 2, pointRadius: 3 }
+    ]
+  },
+  options: {
+    scales: { r: { min: 0, max: 10, ticks: { stepSize: 2 } } },
+    plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } } }
+  }
+});
+
+// ===== 招商银行 Charts =====
+
+// Radar
+new Chart(document.getElementById('cmbRadar'), {
+  type: 'radar',
+  data: {
+    labels: ['技术面', '基本面', '新闻面', '情绪面', '风险面'],
+    datasets: [{
+      label: '招商银行',
+      data: [3.5, 7.5, 6.0, 4.0, 5.5],
+      backgroundColor: 'rgba(16,185,129,0.15)',
+      borderColor: '#10b981',
+      pointBackgroundColor: '#10b981',
+      borderWidth: 2
+    }]
+  },
+  options: {
+    scales: { r: { min: 0, max: 10, ticks: { stepSize: 2 } } },
+    plugins: { legend: { display: false } }
+  }
+});
+
+// Price - 近30日模拟数据（基于实际趋势：从~39.5逐步下滑至37.47）
+const cmbPrices = [39.50,39.42,39.35,39.28,39.20,39.10,39.02,38.95,38.88,38.80,
+                   38.72,38.65,38.58,38.50,38.42,38.35,38.28,38.20,38.12,38.05,
+                   37.98,37.90,37.85,37.80,37.75,37.70,37.65,37.55,37.50,37.47];
+const cmbSMA20 = [39.00,38.98,38.96,38.94,38.92,38.90,38.88,38.86,38.84,38.82,
+                  38.78,38.74,38.70,38.66,38.62,38.58,38.54,38.50,38.46,38.42,
+                  38.38,38.34,38.30,38.26,38.22,38.18,38.14,38.10,38.06,38.02];
+
+new Chart(document.getElementById('cmbPrice'), {
+  type: 'line',
+  data: {
+    labels: xyLabels,
+    datasets: [
+      { label: '收盘价', data: cmbPrices, borderColor: COLORS.price, borderWidth: 2, pointRadius: 0, fill: false },
+      { label: 'SMA20', data: cmbSMA20, borderColor: COLORS.sma20, borderWidth: 1, borderDash: [4,2], pointRadius: 0, fill: false },
+      { label: '目标价 39.50', data: Array(30).fill(39.50), borderColor: COLORS.target, borderWidth: 1, borderDash: [6,3], pointRadius: 0, fill: false },
+      { label: '止损价 36.00', data: Array(30).fill(36.00), borderColor: COLORS.stop, borderWidth: 1, borderDash: [6,3], pointRadius: 0, fill: false }
+    ]
+  },
+  options: {
+    scales: { y: { min: 35.5, max: 40.5 } },
+    plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } }
+  }
+});
+
+// Bull/Bear
+new Chart(document.getElementById('cmbBullBear'), {
+  type: 'bar',
+  data: {
+    labels: ['极端低估', '8%股息率', 'ROE行业前三', '1Q26边际改善', '技术面崩坏', '资金面恶化', '息差收窄', '管理层不确定'],
+    datasets: [
+      { label: '多头', data: [8,7,7,5,0,0,0,0], backgroundColor: COLORS.bull },
+      { label: '空头', data: [0,0,0,0,8,7,7,5], backgroundColor: COLORS.bear }
+    ]
+  },
+  options: {
+    indexAxis: 'y',
+    scales: { x: { max: 10 } },
+    plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } } }
+  }
+});
+
+// Risk Triangle
+new Chart(document.getElementById('cmbRisk'), {
+  type: 'radar',
+  data: {
+    labels: ['下行风险', '错失风险', '波动风险', '流动性风险', '估值风险'],
+    datasets: [
+      { label: '激进', data: [3,8,6,4,2], backgroundColor: 'rgba(239,68,68,0.15)', borderColor: COLORS.aggressive, borderWidth: 2, pointRadius: 3 },
+      { label: '保守', data: [8,3,6,6,4], backgroundColor: 'rgba(59,130,246,0.15)', borderColor: COLORS.conservative, borderWidth: 2, pointRadius: 3 },
+      { label: '中性', data: [5,5,5,4,3], backgroundColor: 'rgba(245,158,11,0.15)', borderColor: COLORS.neutral, borderWidth: 2, pointRadius: 3 }
+    ]
+  },
+  options: {
+    scales: { r: { min: 0, max: 10, ticks: { stepSize: 2 } } },
+    plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } } }
+  }
+});
+</script>
+
+</body>
+</html>

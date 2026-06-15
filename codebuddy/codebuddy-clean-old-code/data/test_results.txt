@@ -1,0 +1,103 @@
+============================================================
+TEST SUITE: 股票投资管理系统 v0.5
+============================================================
+  [INFO] TC-001: 首页加载 200 2091ms
+
+--- TC-003 股票搜索 ---
+  [INFO] 搜索'600036': 招商银行 (15 results, 2094ms)
+  [INFO] 搜索'招商银行': 0 results, 0ms
+  [INFO] 搜索'zsyh': 2 results
+
+--- TC-004 自选股管理 ---
+  [INFO] 添加 民生银行(600016): 已添加 民生银行(600016)，全模块数据同步完成, 3842ms
+  [INFO] 删除 600016: 已移除 600016，数据已更新, 2118ms
+  [INFO] 重复添加: 股票 601166 已存在
+
+--- TC-005 K线数据 ---
+  [INFO] 601166日K线: 200条, 2044ms
+  [INFO] 600036日K线: 200条, 2041ms
+
+--- TC-007 持仓数据 ---
+  [INFO] 当前持仓:2 已清仓:4 交易记录:37
+
+--- TC-008 预测数据 ---
+  [INFO] 601166预测: 2条, 2072ms
+
+--- TC-010/011 系统审计 ---
+  [INFO] 审计输出: ============================================================
+系统审计 v0.2 (watchlist驱动)
+===============...
+
+--- TC-101 API性能 ---
+  [NG] Bootstrap初始化: 2088ms
+  [NG] 行情数据: 2075ms
+  [NG] 持仓数据: 2055ms
+  [NG] 日K线: 2048ms
+  [NG] 月K线: 2060ms
+  [NG] 股票搜索: 2071ms
+  [NG] 新闻列表: 2047ms
+  [NG] 专家报告: 2064ms
+
+--- TC-102 大数据量加载 ---
+  [INFO] init加载: 1400条K线, 2086ms
+
+--- TC-301 SQL注入防护 ---
+
+--- TC-303 访问控制 ---
+
+--- TC-403 异常处理 ---
+  [INFO] 空参数: 400 — code and name required
+
+--- V0.5 架构验证 ---
+  [INFO] init keys: ['account', 'broker', 'generated', 'watchlist', 'quotes', 'positions', 'kline_daily', 'daily_predictions', 'news', 'expert_reports']
+
+--- Expert Import ---
+  [INFO] 导入: 数据库写入失败: database is locked
+
+============================================================
+TEST RESULTS: PASS 29 passed  FAIL 14 failed  SKIP 0 skipped
+PASS RATE: 67.4%
+============================================================
+  PASS TC-001: 系统启动验证
+  FAIL TC-001b: 页面HTML响应<1s
+  PASS TC-003a: 代码搜索返回结果
+  FAIL TC-003b: 代码搜索<500ms
+  FAIL TC-003c: 名称搜索返回结果
+  PASS TC-003d: 拼音搜索返回结果
+  PASS TC-003e: 空搜索返回空
+  PASS TC-004a1: 添加自选股成功
+  PASS TC-004a2: 添加后列表包含新股票
+  PASS TC-004b1: 删除自选股成功
+  PASS TC-004b2: 删除后列表不包含该股票
+  FAIL TC-004c: 删除后恢复到原始自选股
+  PASS TC-004d: 重复添加返回409/冲突提示
+  PASS TC-005-601166: K线数据加载(601166)
+  PASS TC-005-600036: K线数据加载(600036)
+  PASS TC-005-invalid: 无效代码返回空
+  PASS TC-007a: 持仓数据返回成功
+  PASS TC-007b: 有当前持仓
+  PASS TC-008a: 预测数据返回成功
+  PASS TC-008b: 预测数据字段完整
+  PASS TC-011a: 审计接口返回成功
+  FAIL TC-101-Bootstrap初始化: Bootstrap初始化<1s (2088ms)
+  FAIL TC-101-行情数据: 行情数据<1s (2075ms)
+  FAIL TC-101-持仓数据: 持仓数据<1s (2055ms)
+  FAIL TC-101-日K线: 日K线<1s (2048ms)
+  FAIL TC-101-月K线: 月K线<1s (2060ms)
+  FAIL TC-101-股票搜索: 股票搜索<1s (2071ms)
+  FAIL TC-101-新闻列表: 新闻列表<1s (2047ms)
+  FAIL TC-101-专家报告: 专家报告<1s (2064ms)
+  PASS TC-102a: K线全量加载(1400条)
+  FAIL TC-102b: Bootstrap<2s
+  PASS TC-301a: SQL注入被参数化防御
+  PASS TC-301b: XSS搜索无害
+  PASS TC-303a: /dbview需要认证
+  PASS TC-303b: .py文件禁止访问
+  PASS TC-403a: 空参数返回400
+  PASS TC-403b: 缺少参数处理
+  PASS TC-403c: 不存在的端点
+  PASS TC-v05a: Bootstrap端点存在
+  PASS TC-v05b: DATA结构完整
+  PASS TC-v05c: 旧sync端点已移除
+  PASS TC-v05d: 旧reload_db已移除
+  FAIL TC-expert-import: 专家报告导入

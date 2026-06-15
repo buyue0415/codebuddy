@@ -1,0 +1,19 @@
+# Python bytecode
+__pycache__/
+*.pyc
+
+# IDE
+.codebuddy/
+.vscode/
+.idea/
+
+# Temp/log files
+*.log
+*_err.txt
+*_out.txt
+_westock_err.txt
+
+# Temp scripts
+scripts/_check_*
+scripts/check_volume.py
+scripts/backfill_kline_volume.py
