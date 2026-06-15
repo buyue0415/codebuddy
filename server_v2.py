@@ -31,6 +31,13 @@ NODE = r"C:\Users\28312\.workbuddy\binaries\node\versions\22.12.0\node.exe"
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
+# ─── NeoData supplementary data source ───────────────────────────────────────
+try:
+    from fetchers.neodata import check_token as _check_neodata_token
+    _NEODATA_AVAILABLE = _check_neodata_token()
+except ImportError:
+    _NEODATA_AVAILABLE = 'NOT_INSTALLED'
+
 # ─── Init cache (identical to original) ──────────────────────────────────────
 _init_cache = None
 _init_cache_time = 0
@@ -65,7 +72,8 @@ try:
         get_all_monthly_changes, get_all_learning_params,
         get_dividend_yield_series, get_quotes_by_date,
         init_pattern_rules_tables, get_pattern_rules, get_pattern_rule,
-        insert_pattern_rule, update_pattern_rule, delete_pattern_rule)
+        insert_pattern_rule, update_pattern_rule, delete_pattern_rule,
+        init_company_relations_tables, get_company_relations, get_graph_data)
     DB_AVAILABLE = True
 except ImportError:
     DB_AVAILABLE = False
@@ -513,6 +521,12 @@ async def startup_init_tables():
     except Exception as e:
         _write(f"  [Startup] WARNING: init_pattern_rules_tables failed: {e}\n")
 
+    try:
+        init_company_relations_tables()
+        _write("  [Startup] Company relations tables initialized\n")
+    except Exception as e:
+        _write(f"  [Startup] WARNING: init_company_relations_tables failed: {e}\n")
+
     # Clean up stale "running" records from previous server run
         try:
             db = get_db()
@@ -532,6 +546,19 @@ async def startup_init_tables():
             _write(f"  [Startup] WARNING: stale cleanup failed: {e}\n")
     except Exception as e:
         _write(f"  [Startup] WARNING: init_backtest_tables failed: {e}\n")
+
+    # ─── NeoData token status ────────────────────────────────────────────────
+    try:
+        from fetchers.neodata import check_token
+        status = check_token()
+        if status == 'VALID':
+            _write("  [Startup] NeoData token: VALID (补充数据源可用)\n")
+        elif status == 'MISSING':
+            _write("  [Startup] NeoData token: MISSING (需调用 /api/v2/neodata/token 初始化)\n")
+        elif status == 'NOT_INSTALLED':
+            _write("  [Startup] NeoData: NOT_INSTALLED\n")
+    except Exception as e:
+        _write(f"  [Startup] WARNING: neodata status check failed: {e}\n")
 
 app.add_middleware(
     CORSMiddleware,
@@ -2134,7 +2161,102 @@ def api_pattern_scan(code: str):
         return api_response(success=False, error=str(e), status_code=500)
 
 
-# ─── Main entry point ────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────
+# Company Relations Graph API
+# ──────────────────────────────────────────────────────────────────────────
+
+@app.get("/api/v2/company-relations")
+def api_company_relations_get(code: str = Query(default=""), type: str = Query(default="")):
+    """Get company relations graph data (nodes + edges).
+    Args:
+        code: Stock code to filter by (empty = all stocks)
+        type: Relation type filter (equity/executive/supply/competition)
+    """
+    try:
+        code_filter = code.strip() if code else None
+        type_filter = type.strip() if type else None
+        data = get_graph_data(code=code_filter, type_filter=type_filter)
+        return api_response(data=data)
+    except Exception as e:
+        return api_response(success=False, error=str(e), status_code=500)
+
+
+@app.get("/api/v2/company-relations/stats")
+def api_company_relations_stats(code: str = Query(default="")):
+    """Get counts of each relation type.
+    Args:
+        code: Stock code to filter by (empty = all stocks)
+    """
+    try:
+        code_filter = code.strip() if code else None
+        all_rels = get_company_relations(code=code_filter)
+        stats = {'equity': 0, 'executive': 0, 'supply': 0, 'competition': 0, 'total': 0}
+        for r in all_rels:
+            t = r.get('relation_type', '')
+            if t in stats:
+                stats[t] += 1
+            stats['total'] += 1
+        return api_response(data=stats)
+    except Exception as e:
+        return api_response(success=False, error=str(e), status_code=500)
+
+
+@app.post("/api/v2/company-relations/refresh")
+def api_company_relations_refresh():
+    """Trigger data collection via fetch_company_relations.py."""
+    try:
+        ok, output = run_script("fetch_company_relations.py", timeout=120)
+        if ok:
+            return api_response(message="关系数据采集完成", output=output)
+        else:
+            return api_response(success=False, error="采集失败", output=output, status_code=500)
+    except Exception as e:
+        return api_response(success=False, error=str(e), status_code=500)
+
+
+# ─── NeoData API ───────────────────────────────────────────────────────────────
+
+
+@app.get("/api/v2/neodata/status")
+def api_neodata_status():
+    """Check NeoData supplementary data source status."""
+    try:
+        from fetchers.neodata import check_token
+        status = check_token()
+        return api_response({
+            'status': status,
+            'available': status == 'VALID',
+            'description': {
+                'VALID': 'Token 有效，neodata 数据源可用',
+                'MISSING': 'Token 未缓存，需通过 POST /api/v2/neodata/token 初始化',
+                'NOT_INSTALLED': 'neodata-financial-search 插件未安装',
+            }.get(status, '未知状态'),
+        })
+    except Exception as e:
+        return api_response(success=False, error=str(e), status_code=500)
+
+
+@app.post("/api/v2/neodata/token")
+def api_neodata_token(data: dict = None):
+    """Save NeoData token (called after connect_cloud_service).
+
+    Request body (JSON):
+        {"token": "<tempToken from connect_cloud_service>"}
+    """
+    try:
+        if not data or not data.get('token'):
+            return api_response(success=False, error='缺少 token 参数', status_code=400)
+
+        from fetchers.neodata import init_token
+        if init_token(data['token']):
+            return api_response(message='NeoData token 已保存（有效期 12 小时）')
+        else:
+            return api_response(success=False, error='Token 保存失败', status_code=500)
+    except Exception as e:
+        return api_response(success=False, error=str(e), status_code=500)
+
+
+# ─── Main entry point ──────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import uvicorn
