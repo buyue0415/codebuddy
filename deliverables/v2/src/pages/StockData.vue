@@ -55,9 +55,17 @@
         <span class="dp-error" v-if="historyError">{{ historyError }}</span>
       </div>
 
+      <!-- Industry filter bar -->
+      <div class="ind-bar" v-if="watchlistIndustries.length">
+        <button class="tab-btn ind-tab" :class="{ active: activeIndustry === '' }" @click="activeIndustry = ''">📊 全部</button>
+        <button v-for="ind in watchlistIndustries" :key="ind" class="tab-btn ind-tab"
+          :class="{ active: activeIndustry === ind }"
+          @click="activeIndustry = ind">{{ ind }}</button>
+      </div>
+
       <!-- Card grid -->
-      <div class="card-grid" v-if="marketCards.length">
-        <div v-for="card in marketCards" :key="card.code" class="stock-card" :class="{ 'is-history': !!selectedDate }">
+      <div class="card-grid" v-if="filteredCards.length">
+        <div v-for="card in filteredCards" :key="card.code" class="stock-card" :class="{ 'is-history': !!selectedDate }">
           <!-- Header -->
           <div class="card-header">
             <div class="card-stock-info">
@@ -148,8 +156,9 @@
       </div>
 
       <!-- Empty state -->
-      <div v-else class="card">
-        <div class="empty" v-if="selectedDate && !historyLoading">暂无 {{ selectedDate }} 的数据（可能是非交易日）</div>
+      <div v-else-if="!filteredCards.length" class="card">
+        <div class="empty" v-if="activeIndustry">暂无"{{ activeIndustry }}"行业的股票</div>
+        <div class="empty" v-else-if="selectedDate && !historyLoading">暂无 {{ selectedDate }} 的数据（可能是非交易日）</div>
         <div class="empty" v-else>暂无自选股数据，请先在管理设置中添加自选股</div>
       </div>
     </template>
@@ -159,11 +168,14 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useDataStore } from '@/stores/data.js'
+import { useIndustryStore } from '@/stores/industry.js'
 import { fmt, pnlClass, pnlSign, apiCall } from '@/api/client.js'
 
 const data = useDataStore()
+const industryStore = useIndustryStore()
 const refreshOk = ref('')
 const selectedDate = ref('')
+const activeIndustry = ref('')
 const dpOpen = ref(false)
 const dpYear = ref(0)
 const dpMonth = ref(0)
@@ -233,6 +245,29 @@ const marketCards = computed(() => {
       dy: q.dy || 0,
     }
   })
+})
+
+// Industry filter — only show industries present in current watchlist cards
+const watchlistIndustries = computed(() => {
+  const codeToInd = {}
+  for (const s of industryStore.flatStocks) {
+    codeToInd[s.code] = s.industry
+  }
+  const indSet = new Set()
+  for (const c of marketCards.value) {
+    const ind = codeToInd[c.code] || '未分类'
+    indSet.add(ind)
+  }
+  return [...indSet].sort((a, b) => a === '未分类' ? 1 : b === '未分类' ? -1 : a.localeCompare(b, 'zh'))
+})
+const filteredCards = computed(() => {
+  const all = marketCards.value
+  if (!activeIndustry.value) return all
+  const codeToIndustry = {}
+  for (const s of industryStore.flatStocks) {
+    codeToIndustry[s.code] = s.industry
+  }
+  return all.filter(c => (codeToIndustry[c.code] || '未分类') === activeIndustry.value)
 })
 
 function changePct(card) {
@@ -333,6 +368,7 @@ onMounted(async () => {
   if (!data.watchlist.length) await data.fetchAll()
   initCalendar()
   document.addEventListener('click', onDocClick)
+  industryStore.fetchIndustries()
 })
 
 onUnmounted(() => {
@@ -413,6 +449,17 @@ onUnmounted(() => {
 .dp-loading { font-size: 11px; color: #2563eb; display: flex; align-items: center; gap: 4px; }
 .mini-spinner { width: 12px; height: 12px; border: 2px solid #e5e7eb; border-top-color: #2563eb; border-radius: 50%; animation: spin .8s linear infinite; display: inline-block; }
 .dp-error { font-size: 11px; color: #dc2626; }
+
+/* Industry filter bar */
+.ind-bar {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+  padding: 8px 0;
+}
+.ind-tab { font-size: 12px !important; }
+.ind-tab.active { background: #2563eb; color: #fff; border-color: #2563eb; }
 
 /* Card grid */
 .card-grid {

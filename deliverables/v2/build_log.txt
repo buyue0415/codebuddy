@@ -1,0 +1,53 @@
+﻿[36mvite v5.4.21 [32mbuilding for production...[36m[39m
+transforming...
+[32m✓[39m 1349 modules transformed.
+rendering chunks...
+computing gzip size...
+[2mdist/[22m[32mindex.html                                    [39m[1m[2m    0.49 kB[22m[1m[22m[2m │ gzip:   0.35 kB[22m
+[2mdist/[22m[35massets/Trades-Cw2e8TnG.css                    [39m[1m[2m    0.52 kB[22m[1m[22m[2m │ gzip:   0.30 kB[22m
+[2mdist/[22m[35massets/Fees-BRiEE0Q5.css                      [39m[1m[2m    0.53 kB[22m[1m[22m[2m │ gzip:   0.31 kB[22m
+[2mdist/[22m[35massets/IndustryGroupTabs-DRmsY0Xo.css         [39m[1m[2m    1.21 kB[22m[1m[22m[2m │ gzip:   0.45 kB[22m
+[2mdist/[22m[35massets/BacktestPage-DTTS3iX5.css              [39m[1m[2m    1.53 kB[22m[1m[22m[2m │ gzip:   0.58 kB[22m
+[2mdist/[22m[35massets/Kline-Bcuo63Lf.css                     [39m[1m[2m    2.02 kB[22m[1m[22m[2m │ gzip:   0.74 kB[22m
+[2mdist/[22m[35massets/Overview-CFsj9mDB.css                  [39m[1m[2m    3.27 kB[22m[1m[22m[2m │ gzip:   1.02 kB[22m
+[2mdist/[22m[35massets/Expert-C7FIFGa5.css                    [39m[1m[2m    3.40 kB[22m[1m[22m[2m │ gzip:   1.08 kB[22m
+[2mdist/[22m[35massets/Management-BdrqhjPl.css                [39m[1m[2m    4.38 kB[22m[1m[22m[2m │ gzip:   1.19 kB[22m
+[2mdist/[22m[35massets/PatternRules-O2LHbsf7.css              [39m[1m[2m    4.62 kB[22m[1m[22m[2m │ gzip:   1.32 kB[22m
+[2mdist/[22m[35massets/Intelligence-7x3PY8OI.css              [39m[1m[2m    4.77 kB[22m[1m[22m[2m │ gzip:   1.30 kB[22m
+[2mdist/[22m[35massets/CompanyGraph-B3EI55o2.css              [39m[1m[2m    4.94 kB[22m[1m[22m[2m │ gzip:   1.31 kB[22m
+[2mdist/[22m[35massets/index-BWZSo9wc.css                     [39m[1m[2m    5.61 kB[22m[1m[22m[2m │ gzip:   1.73 kB[22m
+[2mdist/[22m[35massets/StockData-Co2k3fpm.css                 [39m[1m[2m    7.00 kB[22m[1m[22m[2m │ gzip:   1.82 kB[22m
+[2mdist/[22m[35massets/News-Dovvpqm7.css                      [39m[1m[2m    8.39 kB[22m[1m[22m[2m │ gzip:   2.21 kB[22m
+[2mdist/[22m[35massets/PaperTrading-CqF77EUz.css              [39m[1m[2m   11.70 kB[22m[1m[22m[2m │ gzip:   2.62 kB[22m
+[2mdist/[22m[36massets/_plugin-vue_export-helper-DlAUqK2U.js  [39m[1m[2m    0.09 kB[22m[1m[22m[2m │ gzip:   0.10 kB[22m
+[2mdist/[22m[36massets/industry-CAjxxejN.js                   [39m[1m[2m    0.94 kB[22m[1m[22m[2m │ gzip:   0.60 kB[22m
+[2mdist/[22m[36massets/IndustryGroupTabs-DLpIxfAu.js          [39m[1m[2m    2.05 kB[22m[1m[22m[2m │ gzip:   1.01 kB[22m
+[2mdist/[22m[36massets/Trades-Bv3WvBOH.js                     [39m[1m[2m    2.63 kB[22m[1m[22m[2m │ gzip:   1.48 kB[22m
+[2mdist/[22m[36massets/Fees-2cxyzhDk.js                       [39m[1m[2m    4.89 kB[22m[1m[22m[2m │ gzip:   2.17 kB[22m
+[2mdist/[22m[36massets/paper-DnLzs2zy.js                      [39m[1m[2m    5.35 kB[22m[1m[22m[2m │ gzip:   1.80 kB[22m
+[2mdist/[22m[36massets/Expert-DwUrcgIl.js                     [39m[1m[2m    7.52 kB[22m[1m[22m[2m │ gzip:   3.23 kB[22m
+[2mdist/[22m[36massets/Overview-BJks9onA.js                   [39m[1m[2m    7.56 kB[22m[1m[22m[2m │ gzip:   3.23 kB[22m
+[2mdist/[22m[36massets/PatternRules-V2ebVW-z.js               [39m[1m[2m    7.75 kB[22m[1m[22m[2m │ gzip:   2.96 kB[22m
+[2mdist/[22m[36massets/Management-CPyNvTGX.js                 [39m[1m[2m    7.88 kB[22m[1m[22m[2m │ gzip:   3.47 kB[22m
+[2mdist/[22m[36massets/News-D4rU6inj.js                       [39m[1m[2m    9.04 kB[22m[1m[22m[2m │ gzip:   4.01 kB[22m
+[2mdist/[22m[36massets/StockData-C3YjS3cI.js                  [39m[1m[2m    9.14 kB[22m[1m[22m[2m │ gzip:   4.00 kB[22m
+[2mdist/[22m[36massets/CompanyGraph-BXhQY4Nz.js               [39m[1m[2m    9.81 kB[22m[1m[22m[2m │ gzip:   4.17 kB[22m
+[2mdist/[22m[36massets/Intelligence-SCcCud7C.js               [39m[1m[2m   10.01 kB[22m[1m[22m[2m │ gzip:   4.31 kB[22m
+[2mdist/[22m[36massets/BacktestPage-BOnK86rl.js               [39m[1m[2m   10.49 kB[22m[1m[22m[2m │ gzip:   4.24 kB[22m
+[2mdist/[22m[36massets/Kline-BzMPJyXV.js                      [39m[1m[2m   22.79 kB[22m[1m[22m[2m │ gzip:   7.96 kB[22m
+[2mdist/[22m[36massets/PaperTrading-B06AtIV-.js               [39m[1m[2m   26.94 kB[22m[1m[22m[2m │ gzip:   9.82 kB[22m
+[2mdist/[22m[36massets/index-5Lp_Kfo6.js                      [39m[1m[2m  114.41 kB[22m[1m[22m[2m │ gzip:  45.21 kB[22m
+[2mdist/[22m[36massets/index-Dx7j62Yp.js                      [39m[1m[33m1,418.12 kB[39m[22m[2m │ gzip: 411.84 kB[22m
+node : [33m
+所在位置 行:1 字符: 230
++ ... rables\v2"; node "C:\Users\28312\.workbuddy\binaries\node\versions\22 ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([33m:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-m
+anualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.[39m
+[32m✓ built in 17.13s[39m

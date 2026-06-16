@@ -1,7 +1,8 @@
 # 10 — 智能预测
 
-> **前端页面**: `deliverables/v2/src/pages/Intelligence.vue` (18KB)
-> **路由**: `/intelligence` | **菜单**: 股票分析预测 → 智能预测
+> **页面文件**: `pages/Intelligence.vue` (16.66 KB) | **路由**: `/intelligence`
+> **Store**: `stores/data.js` (useDataStore) + `stores/industry.js` (useIndustryStore)
+> **组件**: `IndustryGroupTabs.vue` | **依赖**: Chart.js
 
 ---
 
@@ -9,164 +10,117 @@
 
 ### 1.1 业务背景
 
-用户需要基于技术分析信号获取次日涨跌预测，辅助买卖决策。系统需展示10天滚动预测、10项技术信号详情、分时走势预测和历史预测准确率。
+投资者需要了解明日走势的预测方向、关键价位、置信度，以及背后技术信号的详细分析。系统提供 ML 模型 + 技术信号双引擎的智能预测。
 
 ### 1.2 核心目标
 
 | 目标 | 说明 |
 |------|------|
-| 10天滚动预测 | 未来10个交易日的方向/置信度/价格区间 |
-| 10信号详情 | 每项技术指标的当前值和方向 |
-| 分时预测 | 4个时段的独立方向预测 |
-| 历史验证 | 已回填预测的命中率展示 |
-| 手动刷新 | [🔄 刷新] 按钮触发全量同步 |
+| 次日预测 | 方向（看涨/看跌/中性）、预测区间、信心水平、操作建议 |
+| 10日走势图 | 历史收盘 + 预测收盘 + 预测上下限 |
+| 技术信号面板 | MACD/RSI/布林带/KDJ等10大信号详情感 |
+| 准确率统计 | 近20次方向/区间命中率 |
+| 预测vs实际 | 历史预测的命中/未命中可视化 |
 
 ---
 
-## 2. 技术方案深度分析
-
-### 2.1 预测生成（10天滚动）
-
-```python
-# signals.py: gen_multi_day_pred()
-# 输入: code, kdata, info(10信号), lp(学习参数), num_days=10
-
-Day 1（全信号预测）:
-  # 10信号加权投票
-  ws = Σ w[s]['next_day'] × dir_sign(s) + seasonal_adj[month] × 2
-  direction = bullish if ws>0.5 else bearish if ws<-0.5 else neutral
-  confidence = max(0.4, 0.6 × consensus + 0.4 × β_conf)
-
-Day 2-10（动量投影）:
-  direction = Day1的方向（动量延续假设）
-  confidence_n = confidence_1 × 0.85^(n-1)  # 指数衰减
-```
-
-### 2.2 置信度衰减
+## 2. 页面布局
 
 ```
-Day 1:  confidence = 0.65 (全信号计算)
-Day 2:  confidence = 0.65 × 0.85 = 0.55
-Day 3:  confidence = 0.55 × 0.85 = 0.47
-...
-Day 10: confidence = 0.65 × 0.85^9 ≈ 0.15
-```
-
-### 2.3 数据流
-
-```
-sync_all.py Step 6
-  → calc_signals() + gen_multi_day_pred()
-  → daily_predictions 表（每条含 direction/confidence/high/low/entry_zone）
-  → GET /api/v2/predictions/daily/{code}
-  → Intelligence.vue 渲染
-```
-
----
-
-## 3. 功能介绍和实现方式
-
-### 3.1 API 端点
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/v2/predictions/daily` | 批量获取全部自选股预测 |
-| GET | `/api/v2/predictions/daily/{code}` | 单只股票预测（含历史验证） |
-| GET | `/api/v2/accuracy` | 批量准确率统计 |
-| GET | `/api/v2/accuracy/{code}` | 单只股票准确率 |
-| POST | `/api/trigger/predict` | 触发全量同步刷新 |
-
-### 3.2 前端实现
-
-```vue
-<!-- Intelligence.vue 核心结构 -->
-<template>
-  <!-- 股票选择 -->
-  <Dropdown v-model="selectedCode" :options="watchlist" />
-
-  <!-- 当前预测卡片 -->
-  <PredictionCard>
-    <div>当前: ¥{{ close }}</div>
-    <div>预测: {{ directionLabel }} ↑/↓/→</div>
-    <div>置信度: {{ confidence }}%</div>
-    <div>区间: {{ low }} ~ {{ high }}</div>
-    <div>建议: {{ advice }}</div>
-  </PredictionCard>
-
-  <!-- 10天走势预测 -->
-  <D10PredictionChart :data="futurePreds" />
-
-  <!-- 10信号详情 -->
-  <SignalsDetail :signals="signals" />
-
-  <!-- 分时预测 -->
-  <HourlyPrediction :hourly="hourly" />
-
-  <!-- 刷新按钮 -->
-  <Button @click="refresh">🔄 刷新</Button>
-</template>
-```
-
-### 3.3 数据存储
-
-```sql
--- daily_predictions 表核心字段
-direction     TEXT    -- bullish/bearish/neutral
-confidence    REAL    -- 0.4-1.0
-high          REAL    -- 预测最高价
-low           REAL    -- 预测最低价
-entry_zone    REAL    -- 建议入场价位
-advice        TEXT    -- 操作建议文本
--- 回填字段
-actual_close  REAL    -- 实际收盘
-dir_hit       INTEGER -- 方向命中(1/0/NULL)
-range_hit     INTEGER -- 区间命中(1/0/NULL)
+┌─ IndustryGroupTabs: [银行] [保险] [证券] ──────────────┐
+│ [兴业银行] [招商银行] [工商银行]                        │
+├─────────────────────────────────────────────────────────┤
+│ ┌─ 次日预测 ──────────────────────────────────────────┐ │
+│ │  兴业银行 601166                                    │ │
+│ │  ┌──────────┬──────────┬──────────┐                 │ │
+│ │  │ 🔴 看涨   │ 信心 85% │ 买入     │                 │ │
+│ │  │ 区间: 19.20-19.80  │ 建议加仓  │                 │ │
+│ │  ├──────────┴──────────┴──────────┤                 │ │
+│ │  │ 现价:19.50 加仓价:18.90 减仓价:20.30             │ │
+│ │  └─────────────────────────────────────┘             │ │
+│ └──────────────────────────────────────────────────────┘ │
+│                                                          │
+│ ┌─ 10日预测走势 ───────────────────────────────────────┐ │
+│ │  Chart.js 线图: 历史收盘+预测虚线+上下限阴影          │ │
+│ └──────────────────────────────────────────────────────┘ │
+│                                                          │
+│ ┌─ [!] 技术信号 (可折叠) ──────────────────────────────┐ │
+│ │  MACD      🔴 看涨  0.85                             │ │
+│ │  RSI       🟢 看跌  65.2 (接近超买)                  │ │
+│ │  布林带    🔴 看涨  突破下轨                          │ │
+│ │  KDJ       🔴 看涨  K上穿D                           │ │
+│ │  ... 更多信号 (展开)                                  │ │
+│ └──────────────────────────────────────────────────────┘ │
+│                                                          │
+│ ┌─ 准确率统计 ─────────────────────────────────────────┐ │
+│ │  方向命中率: 75% (15/20)  区间命中率: 60% (12/20)    │ │
+│ └──────────────────────────────────────────────────────┘ │
+│                                                          │
+│ ┌─ 预测vs实际历史 ─────────────────────────────────────┐ │
+│ │  Chart.js: ✅/❌ 标记历史预测方向命中情况              │ │
+│ └──────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 4. 用户操作流程
+## 3. 业务逻辑
 
-### 4.1 查看预测
+### 3.1 次日预测
 
-```
-用户: 导航栏 "股票分析预测" → "智能预测"
+| 字段 | 数据来源 | 说明 |
+|------|----------|------|
+| 方向 | predictions[0].direction | bullish(🔴)/bearish(🟢)/neutral(⚪) |
+| 预测区间 | lower_bound ~ upper_bound | 95%置信区间 |
+| 信心 | confidence | 0-100% |
+| 建议 | suggestion | 根据 config 模板渲染 |
+| 加仓价 | pred_price * 0.95 | price_strategy.buy_multiplier |
+| 减仓价 | pred_price * 1.10 | price_strategy.sell_multiplier |
 
-页面显示:
-┌──────────────────────────────────────────┐
-│  智能预测              [兴业银行 ▼]      │
-│                                          │
-│  当前 ¥17.37  预测 bullish ↑  置信 65%  │
-│  区间 ¥17.05 ~ ¥17.85  建议: 低吸为主   │
-│                                          │
-│  10天走势预测                            │
-│  [06-05] [06-06] [06-09] [06-10] ...     │
-│   🟢↑     🟢↑     🟡→     🟡→           │
-│  17.35   17.42   17.38   17.40           │
-│   65%     62%     48%     45%            │
-│                                          │
-│  10信号详情                              │
-│  MACD +0.15% ↑ | RSI 55.2 → | ...        │
-│                                          │
-│  [🔄 刷新]                               │
-└──────────────────────────────────────────┘
+### 3.2 10日预测走势图
+
+```javascript
+// Chart.js 混合图
+// 数据集1: 历史收盘(最近20日) — 实线
+// 数据集2: 预测收盘(未来10日) — 虚线
+// 数据集3: 预测上限 — 虚线+填充
+// 数据集4: 预测下限 — 虚线+填充
 ```
 
-### 4.2 手动刷新预测
+### 3.3 技术信号面板
+
+10个信号分组，每个含方向箭头、数值、说明文本。可折叠。
+
+信号方向颜色规则（与 CSS 相反，此处表示信号方向而非损益）：
+- bullish → 红色 `#dc2626`
+- bearish → 绿色 `#16a34a`
+- neutral → 灰色 `#6b7280`
+
+---
+
+## 4. 交互流程
 
 ```
-用户: 点击 [🔄 刷新]
-  → 按钮禁用，显示 "刷新中..."
-  → POST /api/trigger/predict
-  → 约 30-120 秒后完成
-  → 预测数据自动更新
-  → 按钮恢复可用
+挂载 → IndustryGroupTabs 切换股票
+  → 从 useDataStore.predictions 获取该股票预测
+  → 渲染预测卡片 → 绘制走势图 → 加载技术信号
+  → 计算准确率统计 → 绘制预测vs实际图
 ```
 
-### 4.3 切换股票查看
+### 4.1 刷新
+```
+点击 [刷新预测] → POST /api/trigger/predict
+  → 后端 sync_all.py → frontend refetch
+```
 
-```
-用户: 股票下拉菜单选择 "招商银行"
-  → GET /api/v2/predictions/daily/600036
-  → 图表和信号详情全部切换为新股票数据
-```
+---
+
+## 5. 数据依赖
+
+| API | 用途 |
+|-----|------|
+| GET /api/v2/predictions/daily | 方向/区间/信心 |
+| GET /api/v2/learning | 技术信号+学习参数 |
+| GET /api/v2/accuracy | 准确率统计 |
+| GET /api/v2/kline/daily | 历史走势 |
+| GET /api/v2/config | 价格策略配置 |

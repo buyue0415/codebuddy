@@ -4,7 +4,8 @@
     <template v-else>
       <div class="top-bar">
         <div class="tab-bar">
-          <button v-for="s in data.watchlist" :key="s.code" class="tab-btn" :class="{ active: activeCode === s.code }" @click="switchStock(s.code)">{{ s.name }}</button>
+          <IndustryGroupTabs :stocks="data.watchlist" :activeCode="activeCode"
+            @switch="switchStock" />
         </div>
       </div>
 
@@ -82,9 +83,12 @@
 <script setup>
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useDataStore } from '@/stores/data.js'
+import { useIndustryStore } from '@/stores/industry.js'
+import IndustryGroupTabs from '@/components/IndustryGroupTabs.vue'
 import { fmt } from '@/api/client.js'
 
 const data = useDataStore()
+const industryStore = useIndustryStore()
 const activeCode = ref('')
 const activeIdx = ref(0)
 const radarCanvas = ref(null)

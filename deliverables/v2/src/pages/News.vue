@@ -7,7 +7,6 @@
       <div class="top-bar">
         <div class="tab-bar">
           <button class="tab-btn" :class="{ active: filter === 'all' }" @click="setFilter('all')">全部</button>
-          <button v-for="s in data.watchlist" :key="s.code" class="tab-btn" :class="{ active: filter === s.code }" @click="setFilter(s.code)">{{ s.name }}</button>
           <button class="tab-btn" :class="{ active: filter === 'major' }" @click="setFilter('major')">⚠️ 重大事件</button>
         </div>
         <div class="right-actions">
@@ -17,6 +16,11 @@
           </button>
           <span class="status-text" :class="{ 'status-ok': newsStatus === '✅ 刷新完成', 'status-err': newsStatus?.startsWith('❌') }" v-if="newsStatus">{{ newsStatus }}</span>
         </div>
+      </div>
+      <!-- Industry-grouped stock selector -->
+      <div class="news-stock-area" v-if="data.watchlist.length">
+        <IndustryGroupTabs :stocks="data.watchlist" :activeCode="filter"
+          @switch="(code) => setFilter(code)" />
       </div>
 
       <!-- Date picker (per-stock only) -->
@@ -125,9 +129,12 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useDataStore } from '@/stores/data.js'
+import { useIndustryStore } from '@/stores/industry.js'
+import IndustryGroupTabs from '@/components/IndustryGroupTabs.vue'
 import { apiCall } from '@/api/client.js'
 
 const data = useDataStore()
+const industryStore = useIndustryStore()
 const filter = ref('all')
 const selDate = ref('')
 const dpOpen = ref(false)
@@ -279,6 +286,7 @@ async function triggerNews() {
 // Init
 onMounted(async () => {
   if (!data.watchlist.length) await data.fetchAll()
+  industryStore.fetchIndustries()
   if (sentimentData.value.length) {
     sentimentMonth.value = sentimentMonths.value[0] || ''
     await nextTick(); renderChart()
@@ -308,8 +316,9 @@ onUnmounted(() => { if (statusTimer) clearTimeout(statusTimer) })
 .spinner { width: 36px; height: 36px; border: 3px solid #e5e7eb; border-top-color: #2563eb; border-radius: 50%; animation: spin .8s linear infinite; margin: 0 auto; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .error-card { background: #fef2f2; border: 1px solid #fca5a5; border-radius: 12px; padding: 32px; text-align: center; }
-.top-bar { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.top-bar { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
 .top-bar .tab-bar { flex: 1; display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 0; }
+.news-stock-area { margin-bottom: 12px; }
 .right-actions { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 .status-text { font-size: 11px; color: #6b7280; transition: color 0.3s; }
 .status-text.status-ok { color: #059669; }

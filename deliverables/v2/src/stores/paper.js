@@ -92,6 +92,9 @@ export const usePaperStore = defineStore('paper', () => {
   async function loadIntraday(code, date = '') {
     intradayCode.value = code
     selectedDate.value = date || new Date().toISOString().slice(0, 10)
+    // 先清空旧数据，防止 API 失败时残留前一只股票的分时数据
+    intradayData.value = []
+    availableDates.value = []
     const r = await fetchIntraday(code, date)
     if (r?.success && r.data) {
       intradayData.value = r.data.data || []

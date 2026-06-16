@@ -1,7 +1,8 @@
-# 04 — 自学习与预测引擎
+# 04 — 自学习引擎
 
-> **核心文件**: `scripts/signals.py` (22KB) | **信号数**: 10 | **时段数**: 5
-> **导入方**: `sync_all.py`, `backtest_engine.py`
+> **核心文件**: `scripts/signals.py` (21.6KB) / `scripts/optimize_predict.py` (37.4KB)
+> **算法**: MWU + EG + Beta-Binomial 三算法融合
+> **信号数列**: 10 大技术信号 | **模型**: RandomForest + Ridge 混合回归
 
 ---
 
@@ -9,148 +10,170 @@
 
 ### 1.1 业务背景
 
-系统基于历史K线数据生成次日涨跌预测。预测引擎需要：
-- 从K线计算多项技术指标
-- 综合信号产生方向/置信度/价格区间预测
-- 根据实际结果自动调整各信号权重（自学习）
+单纯的统计预测（如线性回归）无法适应当前 A 股市场的快速变化特征。系统需要一个自适应的信号权重调整机制，根据历史准确率动态调整各信号的影响力，同时叠加 ML 模型来提升预测精度。
 
 ### 1.2 核心目标
 
 | 目标 | 说明 |
 |------|------|
-| 10 信号技术分析 | 覆盖趋势/动量/波动/成交量多维度 |
-| 加权投票预测 | 信号方向 × 自学习权重 → 综合判断 |
-| MWU 在线学习 | 做对的信号加强，做错的信号减弱 |
-| 10 天滚动预测 | Day1 全信号 → Day2-10 动量投影 |
+| 信号自适应调整 | 10个技术信号权重随历史表现动态优化 |
+| ML模型融合 | RandomForest方向 + Ridge区间 = 混合预测 |
+| 30+特征工程 | 价格/量/技术指标/季节/情绪多维度 |
+| 在线学习 | 每次同步后增量更新参数，无需全量重训 |
 
 ---
 
-## 2. 技术方案深度分析
+## 2. 10大技术信号
 
-### 2.1 10 项技术信号
+| # | 信号 | 参数 | 说明 |
+|---|------|------|------|
+| 1 | MACD | 12/26/9 | 指数移动平均交叉，快线与慢线关系 |
+| 2 | RSI | 14 | 相对强弱指数，超买(>70)/超卖(<30) |
+| 3 | 布林带 | 20/2 | 突破上轨看跌、突破下轨看涨 |
+| 4 | KDJ | 9/3/3 | 随机指标，K/D/J三线交叉 |
+| 5 | 季节动量 | 12月 | 过去12个月的收益率动量 |
+| 6 | ATR | 14 | 平均真实波幅，衡量波动性 |
+| 7 | 资金流向 | 14 | 基于量价关系的资金流向 |
+| 8 | ADX | 14 | 平均趋向指数，衡量趋势强度 |
+| 9 | OBV | - | 能量潮，量价配合分析 |
+| 10 | 波动率 | 20 | 20日历史波动率 |
 
-| # | 信号 | 类型 | 方向判断 | 计算周期 |
-|----|------|------|---------|---------|
-| 1 | **MACD** | 趋势 | MACD>Signal→bullish | EMA12/EMA26/Signal9 |
-| 2 | **RSI** | 动量 | >55 bullish, <45 bearish | 14日 |
-| 3 | **Bollinger** | 波动 | 价>上轨 bearish, <下轨 bullish | 20日 2σ |
-| 4 | **KDJ** | 超买超卖 | J>80 bearish, J<20 bullish | 9日 RSV |
-| 5 | **Seasonal** | 季节性 | factor>1 bullish | 12月历史聚合 |
-| 6 | **ATR** | 波动性 | 中性 | 14日 True Range |
-| 7 | **Money Flow** | 资金流 | 3日>1% bullish, <-1% bearish | 3日+10日动量 |
-| 8 | **ADX_Trend** | 趋势强度 | DI+>DI- bullish | 14日 ADX |
-| 9 | **OBV_Divergence** | 量价背离 | OBV新高 bullish | On-Balance Volume |
-| 10 | **Vol_Convergence** | 波动收敛 | 波动收窄→突破方向 | 布林带宽收敛 |
-
-### 2.2 MWU 在线学习算法
-
-```
-对于每个信号 s 的每个时段 p（含 next_day）:
-  if dir_hit == 1:  w[s][p] = w[s][p] × e^(+0.5)   # 正确：权重 × 1.649
-  if dir_hit == 0:  w[s][p] = w[s][p] × e^(-0.5)   # 错误：权重 × 0.607
-
-自适应衰减:
-  β = 0.5 + 0.3 × clamp(0.3, stock_accuracy, 0.8)
-  w[s][p] = w[s][p] × β + 1.0 × (1 - β)
-
-归一化:
-  w[s][p] = w[s][p] / sum(w[s,:]) × 5.0  # 每信号5时段和为5
-```
-
-### 2.3 EG 偏置更新
-
-```
-η = 0.005 × 0.995^n
-bias[p] = clamp(bias[p] + η × error, -0.05, 0.05)
-```
-
-### 2.4 三组件协同
-
-```
-MWU 权重更新 → "哪些信号更值得信赖?"
-EG 偏置更新  → "时段级的系统偏差修正"
-Beta-Binomial → "历史统计的可靠性评估"
-```
-
----
-
-## 3. 功能介绍和实现方式
-
-### 3.1 信号计算 `calc_signals()`
-
-```python
-# 输入: kdata（日K线列表）+ seasonal_factor
-# 输出: {close, atr, signals: {macd, rsi, bollinger, kdj, seasonal,
-#         atr, money_flow, adx_trend, obv_divergence, vol_convergence}}
-# 前置条件: kdata ≥ 14条
-```
-
-### 3.2 预测生成 `gen_multi_day_pred()`
-
-```
-输入: code, kdata, info(信号输出), lp(学习参数), num_days=10
-
-Day 1（当日全信号预测）:
-  加权分数 = Σ w[s][next_day] × dir(s) + seasonal_adj × 2
-  方向判断: ws>0.5→bullish, ws<-0.5→bearish
-  置信度  = max(0.4, 0.6×consensus + 0.4×β_conf)
-  价格区间 = close ± ATR × 2.5
-
-Day 2-10（动量投影）:
-  基于 Day1 方向 + 衰减置信度
-  confidence_Dn = confidence_D1 × 0.85^(n-1)
-```
-
-### 3.3 5 个预测时段（分时）
-
-| 时段 | 权重 | 说明 |
-|------|------|------|
-| 09:30-10:30 | 0.35 | 开盘消化隔夜信息 |
-| 10:30-11:30 | 0.20 | 横盘整理 |
-| 13:00-14:00 | 0.20 | 午后资金活跃 |
-| 14:00-15:00 | 0.25 | 尾盘主力动作 |
-| next_day | — | 次日终盘方向（核心输出） |
-
-### 3.4 学习参数初始化 `new_lp()`
-
+### 信号输出格式
 ```json
 {
-  "signal_weights": { "macd": {"next_day": 1.0, "09:30-10:30": 1.0, ...}, ... },
-  "hourly_bias": { "09:30-10:30": 0.0, ... },
-  "seasonal_adj": { "1"~"12": 0.0 },
-  "confidence_beta": { "bullish": {"alpha":1,"beta":1}, ... },
-  "learning_rate": 0.01, "mw_beta": 0.7, "update_count": 0
+  "signal_name": "MACD",
+  "value": 0.85,           // 信号强度 -1 到 1
+  "signal_type": "bullish"  // bullish/bearish/neutral
 }
 ```
 
 ---
 
-## 4. 用户操作流程
+## 3. 算法详解
 
-### 4.1 首次添加自选股
+### 3.1 MWU (Multiplicative Weights Update)
 
-```
-用户: 管理设置 → 添加自选股 "601166"
-  → sync_all.py 执行
-  → Step 5: update_count==0, 尝试读取回测冷启动权重
-  → Step 6: 生成第一条预测
-  → 前端 "智能预测" 页显示：预测 bullish, 置信度 55%
-```
+核心思想：根据历史表现动态调整信号权重。
 
-### 4.2 每日自学习
-
-```
-每日收盘后:
-  → sync_all.py Step 3: 回填昨日预测（dir_hit 更新）
-  → Step 5: MWU 更新权重 → EG 更新偏置 → Beta-Binomial 更新置信度
-  → 预测准确率逐步提升（从 ~50% → ~60%）
+```python
+def mwu_update(weights, payoffs, eta=0.1):
+    """
+    weights: 当前各信号权重（和为1）
+    payoffs: 各信号在上一轮的收益（命中=1，未命中=0）
+    eta: 学习率，默认0.1
+    """
+    new_weights = [w * (1 + eta * p) for w, p in zip(weights, payoffs)]
+    # 归一化
+    total = sum(new_weights)
+    return [w / total for w in new_weights]
 ```
 
-### 4.3 查看预测详情
+### 3.2 EG (Exponential Gradient)
+
+针对稀疏信号场景的变体。
+
+```python
+def eg_update(weights, payoffs, eta=0.1):
+    """指数梯度更新，适合权重差异大的场景"""
+    new_weights = [w * math.exp(eta * p / max(1e-8, sum(weights)))
+                   for w, p in zip(weights, payoffs)]
+    total = sum(new_weights)
+    return [w / total for w in new_weights]
+```
+
+### 3.3 Beta-Binomial 置信度
+
+基于贝叶斯统计的信号置信度评估。
+
+```python
+alpha = hits + 1    # 命中次数 + 先验
+beta = total - hits + 1  # 未命中次数 + 先验
+confidence = alpha / (alpha + beta)
+# 样本量越小，置信度越接近先验（0.5）
+# 样本量越大，置信度越接近实际命中率
+```
+
+---
+
+## 4. ML预测模型
+
+### 4.1 特征工程（30+ 特征）
+
+| 类别 | 特征数 | 示例 |
+|------|--------|------|
+| 价格特征 | 6 | 收盘价、开盘价、最高价、最低价、前复权价 |
+| 量特征 | 4 | 成交量、成交额、换手率、量比 |
+| 技术指标 | 10 | MACD/RSI/布林带/KDJ/ATR/ADX/OBV等 |
+| 统计特征 | 5 | 移动平均(5/10/20/60)、标准差 |
+| 时间特征 | 3 | 星期几、月份、季度 |
+| 外部特征 | 3 | 行业涨跌幅、大盘涨跌幅、新闻情感 |
+
+### 4.2 混合模型架构
+
+```python
+# 1. RandomForest 方向分类
+rf_model = RandomForestClassifier(n_estimators=200, max_depth=10)
+direction = rf_model.predict(features)  # bullish/bearish/neutral
+
+# 2. Ridge 回归区间预测
+ridge = Ridge(alpha=1.0, fit_intercept=True)
+pred_price = ridge.predict(features)
+lower_bound = pred_price - 1.96 * std_error
+upper_bound = pred_price + 1.96 * std_error
+
+# 3. 置信度 = 多个模型的投票一致性
+confidence = max(direction_probs) * (1 - pred_volatility)
+```
+
+---
+
+## 5. 存储结构
+
+### learning_params 表
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| code | TEXT | 股票代码 |
+| signal_name | TEXT | 信号名称 |
+| param_name | TEXT | 参数名（weight/alpha/beta） |
+| param_value | REAL | 参数值 |
+
+### accuracy_stats 表
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| code | TEXT | 股票代码 |
+| total_predictions | INTEGER | 总预测次数 |
+| direction_hits | INTEGER | 方向命中次数 |
+| direction_rate | REAL | 方向命中率 |
+| range_hits | INTEGER | 区间命中次数 |
+| range_rate | REAL | 区间命中率 |
+
+---
+
+## 6. 学习流程
 
 ```
-用户: 智能预测 → 选择股票 "兴业银行"
-  → 看到10天滚动预测（Day 1 置信度最高，Day 10 衰减）
-  → 查看10信号详情：MACD bullish (+0.15%), RSI 55.2 neutral, ...
-  → 分时预测：4个时段的独立方向预测
+同步触发 → Step 5
+  │
+  ├─ 1. 加载历史 signal payoffs（命中/未命中）
+  ├─ 2. MWU更新 → 调整信号权重
+  ├─ 3. EG更新 → 偏置校正
+  ├─ 4. Beta-Binomial → 重新计算置信度
+  ├─ 5. 保存学习参数到 SQLite
+  └─ 6. 更新准确率统计到 SQLite
+```
+
+---
+
+## 7. 数据流向
+
+```
+signals.py → 10个技术信号 → 特征向量 (30+维)
+       ↓
+optimize_predict.py → RF分类器 + Ridge回归
+       ↓
+   预测结果 (direction + price + bounds + confidence)
+       ↓
+   daily_predictions 表 / prediction_signals 表
 ```

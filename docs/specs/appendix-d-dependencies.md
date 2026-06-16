@@ -1,112 +1,130 @@
-# 附录 D: 模块依赖关系图
+# 附录 D — 依赖关系
 
-> **版本**: v4.0 | **更新日期**: 2026-06-06
-
----
-
-## 系统架构
-
-```
-┌─────────────────────────────────────────────────────────┐
-│              Vue 3 SPA (deliverables/v2/dist/)           │
-│  index.html + assets/* + chart.*.js                      │
-└──────────────┬──────────────────────────────────────────┘
-               │ fetch /api/v2/*
-               ▼
-┌──────────────────────────────────────────────────────────┐
-│           server_v2.py (FastAPI :8766)                    │
-│                                                          │
-│  GET  / → V2 dist/index.html                             │
-│  GET  /assets/{path} → V2 dist assets                    │
-│  GET  /api/v2/* → JSONResponse                            │
-│  POST /api/v2/* → JSONResponse                            │
-│  GET  /data/{path}, /scripts/{path} → 静态文件            │
-│                                                          │
-│  ┌── subprocess.run() ──────────────────────────────┐   │
-│  │  sync_all.py  fetch_news.py  update_statement.py │   │
-│  │  backtest_engine.py  paper_trading.py             │   │
-│  └───────────────────────────────────────────────────┘   │
-└──────────────┬───────────────────────────────────────────┘
-               │ from db_helper import ...
-               ▼
-┌──────────────────────────────────────────────────────────┐
-│              SQLite: data/stock.db (WAL)                  │
-│                                                          │
-│  分析层: watchlist, kline_daily/monthly,                  │
-│          daily_predictions, prediction_hourly/signals,    │
-│          learning_params, accuracy_stats, seasonal        │
-│                                                          │
-│  行情层: quotes, news                                    │
-│                                                          │
-│  交易层: stocks, positions, closed_positions,            │
-│          trades, dividends, expert_reports                │
-│                                                          │
-│  V0.9: paper_account, paper_positions, paper_trades,     │
-│         paper_daily_snapshot, paper_suggestions,          │
-│         pattern_rules, backtest_runs                      │
-└──────────────────────────────────────────────────────────┘
-```
+> **关联规范**: [01-system-architecture.md](01-system-architecture.md)
 
 ---
 
-## 关键数据流
+## 1. Python 运行时依赖
 
-### 预测流
-```
-NeoData API → sync_all.py (8步流程)
-  → kline_daily/daily_predictions/learning_params (SQLite)
-  → GET /api/v2/predictions/daily → Vue 前端
-```
+### 1.1 标准库（Python 3.10+）
 
-### 交易流
-```
-广发对账单.xlsx → update_from_statement.py
-  → positions/trades/dividends (SQLite)
-  → GET /api/v2/positions → Vue 前端
-```
+| 模块 | 用途 |
+|------|------|
+| http.server | 旧版服务器（已废弃） |
+| json | JSON序列化/反序列化 |
+| sqlite3 | SQLite数据库操作 |
+| subprocess | 子进程脚本编排（sync_all, fetch_news等） |
+| threading | 并发控制（全局锁） |
+| concurrent.futures | K线并行采集 |
+| datetime / time | 时间和日期处理 |
+| email / imaplib | 邮件对账单解析 |
+| os / sys / pathlib | 文件和路径操作 |
+| zipfile | ZIP对账单解压 |
+| io | 文件流处理 |
+| xml.parsers.expat | 对账单Excel XML解析 |
+| hashlib | 文件校验 |
+| csv | CSV导出 |
+| logging | 日志记录 |
+| re | 正则表达式 |
 
-### 新闻流
-```
-NeoData API → fetch_news.py
-  → news (SQLite)
-  → GET /api/v2/news → Vue 前端
-```
+### 1.2 第三方库
 
-### 回测+纸面交易流
+| 包 | 用途 | 安装 |
+|----|------|------|
+| fastapi | API框架 | pip install fastapi |
+| uvicorn | ASGI服务器 | pip install uvicorn |
+| akshare | 东方财富数据源 | pip install akshare |
+| pandas | 数据分析 | pip install pandas |
+| numpy | 数值计算 | pip install numpy |
+| scikit-learn | ML模型(RF/Ridge) | pip install scikit-learn |
+
+### 1.3 可选依赖
+
+| 包 | 用途 |
+|----|------|
+| openpyxl | Excel读写（对账单解析） |
+
+---
+
+## 2. Python 模块依赖
+
 ```
-backtest_engine.py → learning_params.backtest_weights
-sync_all.py Step5 → 冷启动读取 → MWU在线微调
-sync_all.py Step6 → daily_predictions
-paper_trading.py → paper_suggestions → 自动执行
-  → paper_* 表 → GET /api/v2/paper/* → Vue 前端
+server_v2.py (FastAPI)
+  ├── scripts/db_helper.py       [数据库访问层]
+  ├── scripts/fetchers/__init__.py [数据源获取器]
+  │     ├── WestockFetcher        [本地量化数据源]
+  │     ├── NeoDataFetcher        [NeoData API]
+  │     ├── EastMoneyFetcher      [东方财富, via akshare]
+  │     ├── SinaFetcher           [新浪财经]
+  │     └── TencentFetcher        [腾讯证券]
+  │
+  ├── subprocess → scripts/sync_all.py   [全量同步]
+  │     └── import → scripts/fetch_news.py
+  │     └── import → scripts/signals.py
+  │     └── import → scripts/optimize_predict.py
+  │
+  ├── subprocess → scripts/fetch_news.py  [新闻采集]
+  │     └── import → scripts/db_helper.py
+  │
+  └── subprocess → scripts/update_from_statement.py [对账单解析]
+        └── import → scripts/db_helper.py
 ```
 
 ---
 
-## 模块依赖矩阵
+## 3. 页面路由依赖
 
-| 模块 | 核心文件 | 依赖 | 被依赖 |
-|------|---------|------|--------|
-| API服务 | server_v2.py | db_helper, subprocess脚本 | Vue前端 |
-| 数据库 | db_helper.py | sqlite3 | 全部模块 |
-| 同步引擎 | sync_all.py | db_helper, signals, fetch_news | scheduler, server_v2 |
-| 信号引擎 | signals.py | numpy(可选) | sync_all, backtest_engine |
-| 新闻抓取 | fetch_news.py | db_helper, Node.js | sync_all, server_v2 |
-| 对账单解析 | update_from_statement.py | db_helper, pandas | server_v2 |
-| 回测引擎 | backtest_engine.py | db_helper, signals | server_v2 |
-| 纸面交易 | paper_trading.py | db_helper, markets | scheduler, server_v2 |
-| 定时调度 | scheduler.py | subprocess各脚本 | Windows任务计划程序 |
+| 页面 | 路由 | 组件 | Stores | API |
+|------|------|------|--------|-----|
+| Overview | /overview | - | useDataStore, useOverviewStore | 15个并行API |
+| Trades | /trades | - | useDataStore | /trades |
+| Fees | /fees | - | useDataStore | 遍历持仓 |
+| Management | /manage | StockSelector | useDataStore, useIndustryStore | /watchlist |
+| Intelligence | /intelligence | IndustryGroupTabs | useDataStore, useIndustryStore | /predictions, /learning, /accuracy |
+| Expert | /expert | IndustryGroupTabs | useDataStore, useIndustryStore | /expert |
+| News | /news | IndustryGroupTabs | useDataStore, useIndustryStore | /news |
+| StockData | /stock-data | - | useDataStore, useIndustryStore | /quotes |
+| Kline | /kline | IndustryGroupTabs | useDataStore, useIndustryStore | /kline/daily |
+| PatternRules | /pattern-rules | - | useDataStore | /pattern-rules |
+| CompanyGraph | /company-graph | IndustryGroupTabs | useDataStore, useIndustryStore | /graph-data |
+| BacktestPage | /backtest | - | useDataStore | /backtest/* |
+| PaperTrading | /paper | - | useDataStore | /paper/* |
 
 ---
 
-## 外部依赖
+## 4. Stores 依赖
 
-| 依赖 | 版本 | 用途 |
-|------|------|------|
-| Python | 3.12+ | 后端环境 |
-| FastAPI + Uvicorn | — | Web框架 |
-| Node.js | 22+ | westock-data CLI |
-| westock-data | — | NeoData 金融数据 |
-| pandas/openpyxl | — | 对账单Excel解析 |
-| Vue 3 + Vite | 5.x | 前端框架 |
-| Chart.js | — | K线图表渲染 |
+```
+useDataStore (data.js)
+  → api/client.js (15个并行请求)
+  → 共享: watchlist, quotes, positions, trades, news, kline, predictions, expertReports, accuracy, learning, seasonal, config
+
+useOverviewStore (overview.js)
+  → useDataStore (计算派生数据)
+
+useIndustryStore (industry.js)
+  → api/client.js (/api/v2/industries)
+  → 共享: industries, flatStocks
+```
+
+---
+
+## 5. 数据库表依赖
+
+```
+stock.db
+  ├── 基础: stocks, watchlist
+  ├── K线: kline_daily, kline_monthly
+  ├── 行情: quotes
+  ├── 交易: positions, closed_positions, trades, dividends
+  ├── 预测: daily_predictions, prediction_hourly, prediction_signals
+  ├── 学习: learning_params, accuracy_stats, seasonal
+  ├── 新闻: news
+  ├── 专家: expert_reports
+  ├── 形态: pattern_rules
+  ├── 关系: company_relations, company_business, ml_models
+  ├── 回测: backtest_runs
+  └── 纸面: paper_account, paper_positions, paper_trades, 
+             paper_daily_snapshot, paper_suggestions,
+             paper_suggestions_history, intraday_quotes
+```

@@ -2,8 +2,9 @@
   <div class="page-content">
     <div v-if="data.loading && !Object.keys(data.allKlineDaily).length" class="loading"><div class="spinner"></div></div>
     <template v-else>
-      <div class="tab-bar" v-if="data.watchlist.length">
-        <button v-for="s in data.watchlist" :key="s.code" class="tab-btn" :class="{ active: activeCode === s.code }" @click="switchStock(s.code)">{{ s.name }}</button>
+      <div v-if="data.watchlist.length">
+        <IndustryGroupTabs :stocks="data.watchlist" :activeCode="activeCode"
+          @switch="switchStock" />
       </div>
 
       <template v-if="activeCode">
@@ -72,8 +73,11 @@
 import { ref, computed, onMounted, watch, nextTick, onUnmounted } from 'vue'
 import { useDataStore } from '@/stores/data.js'
 import { fmt, apiCall } from '@/api/client.js'
+import { useIndustryStore } from '@/stores/industry.js'
+import IndustryGroupTabs from '@/components/IndustryGroupTabs.vue'
 
 const data = useDataStore()
+const industryStore = useIndustryStore()
 const activeCode = ref('')
 const klineCanvas = ref(null)
 const dyCanvas = ref(null)
@@ -154,10 +158,20 @@ function renderAll() {
   if (!code) return
   const klineRaw = data.allKlineDaily[code] || []
   const kline = klineRaw.slice().reverse()
-  if (!kline.length) return
+  if (!kline.length) {
+    console.warn('[Kline] no daily kline data for', code)
+    return
+  }
+  try {
   const divs = data.allDividends.filter(d => d.code === code)
   const mcRaw = data.allKlineMonthly[code] || []
-  const mc = mcRaw.map(b => [b[0], b[6]])
+  // 从月K线收盘价计算涨跌幅（避免后端 change_pct 未计算导致的空白）
+  const mc = mcRaw.map((b, i) => {
+    const prev = i > 0 ? mcRaw[i - 1] : null
+    const prevClose = prev ? prev[4] : b[4]
+    const cp = prevClose ? +((b[4] - prevClose) / prevClose * 100).toFixed(2) : 0
+    return [b[0], cp]
+  })
   const sea = data.seasonal[code] || []
 
   const labels = kline.map(k => k[0])
@@ -765,15 +779,30 @@ function renderAll() {
       dyHint.value.textContent = '滚轮平移 ｜ Ctrl+滚轮缩放 ｜ 公式计算值(TTM推算)' + (hasDivs ? ' ｜ ▼ = 分红除权日' : '') + (latestDy != null ? ' ｜ 当前: ' + latestDy.toFixed(2) + '%' : '')
     }
   })
+} catch (e) {
+  console.error('[Kline] renderAll error for', activeCode.value, ':', e)
+}
 }
 
 onMounted(async () => {
   if (!data.watchlist.length) await data.fetchAll()
+  industryStore.fetchIndustries()
   activeCode.value = data.watchlist[0]?.code || ''
   await nextTick()
   renderAll()
 })
 watch(activeCode, async () => { await nextTick(); renderAll() })
+
+// 当 store 中月度数据更新后自动重渲染（全量刷新/添加股票后数据就绪）
+watch(
+  () => data.allKlineMonthly[activeCode.value],
+  (newData, oldData) => {
+    if (activeCode.value && newData !== oldData) {
+      console.log('[Kline] monthly data changed for', activeCode.value, 'bars:', newData?.length)
+      nextTick(renderAll)
+    }
+  },
+)
 
 // Recompute monthly stats when date range changes
 watch([mcStart, mcEnd], () => {

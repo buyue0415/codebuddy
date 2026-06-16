@@ -19,11 +19,11 @@ def log(msg):
         pass
 
 log("=== Daily Sync Runner START ===")
-log("Running sync_all.py...")
+log("Running scheduler.py sync...")
 start = time.time()
 try:
     result = subprocess.run(
-        [PYTHON, os.path.join(ROOT, "scripts", "sync_all.py")],
+        [PYTHON, os.path.join(ROOT, "scripts", "scheduler.py"), "sync"],
         cwd=ROOT, capture_output=True, text=True, timeout=300
     )
     elapsed = time.time() - start
@@ -34,12 +34,12 @@ try:
     if result.stderr:
         for line in result.stderr.strip().split("\n")[-10:]:
             print(f"  stderr: {line}")
-    log(f"sync_all.py {'OK' if ok else 'FAILED'} (exit={result.returncode}, {elapsed:.0f}s)")
+    log(f"scheduler.py sync {'OK' if ok else 'FAILED'} (exit={result.returncode}, {elapsed:.0f}s)")
 except subprocess.TimeoutExpired:
-    log("sync_all.py TIMEOUT after 300s")
+    log("scheduler.py sync TIMEOUT after 300s")
     ok = False
 except Exception as e:
-    log(f"sync_all.py ERROR: {e}")
+    log(f"scheduler.py sync ERROR: {e}")
     ok = False
 
 log("Checking for stale predictions...")

@@ -24,10 +24,8 @@
 
       <!-- Stock switcher -->
       <div class="cg-tab-row">
-        <button
-          v-for="s in data.watchlist" :key="s.code"
-          class="cg-tab" :class="{ active: activeCode === s.code }"
-          @click="switchCode(s.code)">{{ s.name }}</button>
+        <IndustryGroupTabs :stocks="data.watchlist" :activeCode="activeCode"
+          @switch="switchCode" />
       </div>
 
       <!-- Type filter + stats -->
@@ -96,6 +94,8 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useCompanyGraphStore } from '@/stores/companyGraph.js'
+import { useIndustryStore } from '@/stores/industry.js'
+import IndustryGroupTabs from '@/components/IndustryGroupTabs.vue'
 import { useDataStore } from '@/stores/data.js'
 
 const store = useCompanyGraphStore()
@@ -146,11 +146,16 @@ const nodeRelations = computed(() => {
   return rels
 })
 
+let switchCounter = 0
 async function switchCode(code) {
+  const reqId = ++switchCounter
   activeCode.value = code
   await store.fetchData(code, activeType.value)
+  if (reqId !== switchCounter) return
   await store.fetchStats(code)
+  if (reqId !== switchCounter) return
   await nextTick()
+  if (reqId !== switchCounter) return
   renderGraph()
 }
 
@@ -381,15 +386,10 @@ onUnmounted(() => {
 
 /* ── Stock tabs ── */
 .cg-tab-row {
-  display: flex;
-  gap: 4px;
   padding: 8px 20px;
   background: #fff;
   border-bottom: 1px solid #f1f5f9;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
 }
-.cg-tab-row::-webkit-scrollbar { height: 0; }
 
 /* ── Type + Stats row ── */
 .cg-type-row {

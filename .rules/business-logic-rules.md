@@ -330,3 +330,83 @@ shutil.copy(original_path, backup_path)
 **MUST NOT**:
 - 降级生成的数据不被持久化到 `intraday_quotes` 表（查询时实时计算）
 - 降级逻辑不修改 `kline_daily` 表数据
+
+---
+
+## 9. 月度涨跌幅与季节性计算规则
+
+### 9.1 月度涨跌幅计算 (`scripts/scheduler.py`)
+
+**MUST**:
+- 在 Step 3 中为新增股票（`kline_monthly` 表无记录）从日K线数据按月聚合生成月K线
+- `change_pct` 必须使用相邻月份收盘价百分比计算，不允许硬编码为 `0.0`：
+
+```python
+# 正确计算方式:
+sorted_months = sorted(monthly.items())
+for i, (m, v) in enumerate(sorted_months):
+    prev_close = sorted_months[i-1][1]['close'] if i > 0 else v['close']
+    cp = round((v['close'] - prev_close) / prev_close * 100, 2) if prev_close else 0.0
+    bars_m.append([f"{m}-01", v['open'], v['high'], v['low'], v['close'], v['vol'], cp])
+```
+
+**MUST NOT**:
+- 月度 `change_pct` 写死为 `0.0`（会导致所有月度涨跌幅显示为持平）
+
+### 9.2 前端备用计算 (`deliverables/v2/src/pages/Kline.vue`)
+
+**MUST**:
+- 前端从月K线收盘价自行计算涨跌幅，作为后端 `change_pct` 的备用兜底：
+
+```javascript
+const mc = mcRaw.map((b, i) => {
+  const prev = i > 0 ? mcRaw[i - 1] : null
+  const prevClose = prev ? prev[4] : b[4]
+  const cp = prevClose ? +((b[4] - prevClose) / prevClose * 100).toFixed(2) : 0
+  return [b[0], cp]
+})
+```
+
+### 9.3 月度柱状图颜色规则
+
+| 条件 | 颜色 | 说明 |
+|------|------|------|
+| 月涨幅 > 0 | `#dc2626` 红色 | 上涨 |
+| 月涨幅 < 0 | `#16a34a` 绿色 | 下跌 |
+| 月涨幅 = 0 | `#6b7280` 灰色 | 持平 |
+
+### 9.4 K线页面数据刷新监听
+
+**MUST**:
+- K线页面必须监听 `data.allKlineMonthly` 的引用变化，在数据刷新后自动重渲染：
+
+```javascript
+watch(
+  () => data.allKlineMonthly[activeCode.value],
+  (newData, oldData) => {
+    if (activeCode.value && newData !== oldData) nextTick(renderAll)
+  }
+)
+```
+
+**MUST NOT**:
+- 依赖用户手动刷新页面来获取最新数据
+
+### 9.5 季节性因子计算 (`scripts/scheduler.py`)
+
+**MUST**:
+- 对每只股票独立计算季节性因子，禁止使用统一的硬编码默认值
+- 计算方式：从 `kline_monthly` 表查询该股票所有 `change_pct`，按日历月份（1-12月）分组求算数平均：
+
+```python
+rows = SELECT date, change_pct FROM kline_monthly WHERE code=? ORDER BY date
+mg = {1:[], 2:[], ..., 12:[]}
+for r in rows:
+    mg[int(r['date'][5:7])].append(r['change_pct'])
+seasonal = [round(sum(vals)/len(vals), 2) if vals else 0.0 for m in 1..12]
+```
+
+- 无月度数据的股票可使用 `DEFAULT_SEASONAL` 作为回退值
+
+**MUST NOT**:
+- 对所有股票写入同一个硬编码的 12 个月数组

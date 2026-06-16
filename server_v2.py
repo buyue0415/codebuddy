@@ -83,10 +83,6 @@ except ImportError:
 _init_cache = None
 
 _init_cache_time = 0
-
-CACHE_TTL = 5
-
-
 # ─── Paper Trading Auto-Executor State ──────────────────────────────────────────
 
 _auto_executor_lock = threading.Lock()
@@ -159,7 +155,8 @@ try:
 
         insert_pattern_rule, update_pattern_rule, delete_pattern_rule,
 
-        init_company_relations_tables, get_company_relations, get_graph_data)
+        init_company_relations_tables, get_company_relations, get_graph_data,
+        get_industries_stocks, auto_fetch_company_business)
 
     DB_AVAILABLE = True
 
@@ -1793,7 +1790,7 @@ async def api_watchlist_add(request: Request):
 
 
 
-    ok1, out1 = run_script("sync_all.py", 120)
+    ok1, out1 = run_script("scheduler.py", 180, args=['sync'])
 
     _invalidate_init_cache()
 
@@ -3162,38 +3159,20 @@ async def api_v2_watchlist_post(request: Request):
             return api_response(success=False, error=f"股票 {code} 已存在", status_code=409)
 
         add_watchlist(code, name, market)
-
-
-
-    ok1, out1 = run_script("sync_all.py", 120)
+        # Auto-fetch company business data for the newly added stock
+        try:
+            auto_fetch_company_business(code, name)
+        except Exception:
+            pass  # Non-blocking
 
     _invalidate_init_cache()
 
-    if ok1:
+    return api_response(
+        message=f"已添加 {name}({code})",
+        watchlist=[dict(r) for r in get_watchlist()] if DB_AVAILABLE else [],
+    )
 
-        return api_response(
 
-            message=f"已添加 {name}({code})，全模块数据同步完成",
-
-            watchlist=wl if DB_AVAILABLE else [],
-
-            output=out1[-500:] if out1 else "",
-
-        )
-
-    else:
-
-        return api_response(
-
-            success=False,
-
-            error=f"数据同步失败: {code}",
-
-            message=f"股票已添加到自选股，但数据同步失败。请手动点击'刷新数据'按钮",
-
-            output=out1[-500:] if out1 else "",
-
-        )
 
 
 
@@ -4576,6 +4555,26 @@ def api_neodata_token(data: dict = None):
 
 
 
+
+
+# ─── Industry Grouped Stocks ──────────────────────────────────
+
+
+@app.get("/api/v2/industries")
+
+def api_v2_industries():
+
+    """获取按行业分组的股票列表（含 in_watchlist 标记）。"""
+
+    try:
+
+        data = get_industries_stocks()
+
+        return api_response(data=data)
+
+    except Exception as e:
+
+        return api_response(success=False, error=str(e), status_code=500)
 
 # ─── Paper Trading Auto-Executor (background daemon thread) ──────────────────
 

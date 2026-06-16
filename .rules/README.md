@@ -10,7 +10,43 @@
 |------|------|-------------|
 | [代码风格规范](./code-style.md) | 命名、格式、文档、错误处理 | 🔴 强制 (MUST) |
 | [架构约束](./architecture-constraints.md) | 四层架构、依赖方向、目录结构、模块交互、强制校验 | 🔴 强制 (MUST) |
-| [业务逻辑规则](./business-logic-rules.md) | 数据一致性、预测生成、交易计算 | 🔴 强制 (MUST) |
+| [业务逻辑规则](./business-logic-rules.md) | 数据一致性、预测生成、交易计算、月K线/季节性计算 | 🔴 强制 (MUST) |
+
+---
+
+## 强制执行级别定义
+
+| 级别 | 关键词 | 含义 |
+|------|--------|------|
+| 🔴 MUST / MUST NOT | 强制 | 必须遵守，违反即Bug |
+| 🟡 SHOULD / SHOULD NOT | 推荐 | 强烈建议，特殊情况可豁免 |
+| 🟢 MAY | 可选 | 允许但不强制 |
+
+---
+
+## 开发过程规则
+
+### 规范文档与代码同步（R001）
+
+**级别**: 🔴 MUST | **适用范围**: 全部开发活动
+
+**任何代码变更，无论大小，都必须同步更新对应的 `docs/specs/` 规范文档**：
+
+1. **新增功能** → 补充对应 spec 文件的功能描述、数据流、代码示例
+2. **修改功能** → 同步更新 spec 中的实现逻辑、参数、返回值
+3. **删除功能** → 从 spec 中移除对应描述或标记为已废弃
+4. **Bug 修复** → 更新 `appendix-f-known-issues.md`（新增记录或更新状态）
+
+对应 spec 文件索引：
+| 变更类型 | 需更新的 spec |
+|----------|---------------|
+| 后端 API / 数据层 | `03-data-sync-engine.md` / `02-database-layer.md` / `appendix-b-api-reference.md` |
+| 前端页面 / 组件 | 对应页面 spec（`14-kline-charts.md` 等）|
+| 数据库结构 | `appendix-a-database-schema.md` |
+| Bug 修复 | `appendix-f-known-issues.md` |
+| 依赖变更 | `appendix-d-dependencies.md` |
+
+**文档更新必须在代码变更的同一提交中完成，不允许事后补文档。**
 
 ---
 

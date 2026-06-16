@@ -1,7 +1,8 @@
 # 06 — 持仓总览
 
-> **前端页面**: `deliverables/v2/src/pages/Overview.vue` (11KB)
-> **路由**: `/overview` | **菜单**: 个人交易数据 → 持仓总览
+> **页面文件**: `pages/Overview.vue` (11.19 KB) | **路由**: `/overview`
+> **Store**: `stores/overview.js` (useOverviewStore) + `stores/data.js` (useDataStore)
+> **API依赖**: 15个并行API通过 useDataStore.fetchAll() 加载
 
 ---
 
@@ -9,131 +10,139 @@
 
 ### 1.1 业务背景
 
-用户需要一目了然地了解当前持仓状态：持有哪些股票、成本价、当前市值、浮盈亏、历史分红收益，以及已清仓股票的实现盈亏。
+投资者需要一个集中页面，快速了解所有持仓资产的总体状况，包括当前持仓盈亏、已清仓股票收益、持仓分红明细等关键信息。
 
 ### 1.2 核心目标
 
 | 目标 | 说明 |
 |------|------|
-| 当前持仓总览 | 展示每只持仓股票的代码/名称/数量/成本/现价/盈亏 |
-| 已清仓汇总 | 历史清仓股票的实现盈亏统计 |
-| 分红收益 | 累计分红金额展示 |
-| 关键指标 | 总资产、总盈亏、收益率一览 |
+| 资产总览 | 4个统计卡片展示总资产、浮动盈亏、已实现盈亏、累计费用 |
+| 当前持仓明细 | 每只持仓股票的成本/现价/市值/盈亏/股息率 |
+| 已清仓汇总 | 已清仓股票的盈亏和分红统计 |
+| 分红记录 | 当前持仓和已清仓股票的历史分红明细 |
+| 实时刷新 | "刷新股价"按钮，价差动画提示涨跌 |
 
 ---
 
-## 2. 技术方案深度分析
-
-### 2.1 数据流
+## 2. 页面布局
 
 ```
-GET /api/v2/positions/current  → positions 表（当前持仓）
-GET /api/v2/positions/closed   → closed_positions 表（已清仓）
-GET /api/v2/quotes             → quotes 表（实时行情）
-GET /api/v2/dividends          → dividends 表（分红记录）
-
-client.js → loadAllData() → 并行请求 → Pinia store → Overview.vue computed
+┌─────────────────────────────────────────────────────┐
+│ [刷新股价] 最后刷新: 17:10:00                        │
+├──────────┬──────────┬──────────┬─────────────────────┤
+│ 总资产   │ 浮动盈亏  │ 已实现盈亏 │ 累计手续费        │
+│ 12.34万  │ +5.67万  │ +3.21万  │ 0.45万             │
+│          │ (+15.2%) │ (含分红)  │                    │
+├──────────┴──────────┴──────────┴─────────────────────┤
+│ ┌─ 当前持仓 ────────────────────────────────────────┐│
+│ │ 股票 │ 持仓 │ 成本价 │ 现价 │ 市值 │ 浮盈亏 │ 股息率 ││
+│ │ 兴业 │ 5000 │ 18.23 │19.50│9.75万│+6.97% │ 4.2%  ││
+│ │ 招商 │ 3000 │ 35.10 │36.80│11.04│+4.85% │ 3.1%  ││
+│ └──────────────────────────────────────────────────┘│
+├─────────────────────────────────────────────────────┤
+│ ┌─ 已清仓 ────────────────────────────────────────┐│
+│ │ 股票 │ 交易盈亏 │ 分红收入 │ 合计收益 │          ││
+│ │ 工商 │ +2345    │ +567    │ +2912   │          ││
+│ └──────────────────────────────────────────────────┘│
+├─────────────────────────────────────────────────────┤
+│ ┌─ 持仓分红明细 ──────────────────────────────────┐│
+│ │ 派息日 │ 股票 │ 每股派息 │ 持仓 │ 分红金额       ││
+│ │ 06-15 │ 兴业 │ 0.188    │ 5000 │ +940.00       ││
+│ │ 05-20 │ 招商 │ 0.150    │ 3000 │ +450.00       ││
+│ └──────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────┘
 ```
 
-### 2.2 浮盈亏计算
+---
+
+## 3. 业务逻辑
+
+### 3.1 统计卡片计算（useOverviewStore.stats）
 
 ```javascript
-// 前端实时计算
-unrealized_pnl = (current_price - avg_cost) × qty
-unrealized_pnl_pct = (current_price / avg_cost - 1) × 100
-
-// 后端 db_helper.py 提供费用汇总
-get_current_positions() → {total_commission, total_stamp_tax, total_other_fees}
+// 总资产 = Σ(现价 × 持仓股数) 当前持仓
+// 浮动盈亏 = 总资产 - 总成本
+// 已实现盈亏 = Σ(已清仓 realized_pnl + dividends_total)
+// 累计手续费 = Σ(当前持仓佣金+印花税+其他) + Σ(已清仓费用)
+// 盈亏颜色: profit(+)/loss(-) 红色涨/绿色跌
 ```
 
-### 2.3 数据源
+### 3.2 当前持仓表格（positionRows）
 
-| 数据项 | 后端来源 | 表 |
-|--------|---------|-----|
-| 当前持仓 | `get_current_positions()` | positions |
-| 已清仓汇总 | `get_closed_positions()` | closed_positions |
-| 交易记录 | `get_trades()` | trades |
-| 行情报价 | `get_quotes()` | quotes |
-| 分红记录 | `get_dividends()` | dividends |
+| 字段 | 计算方式 |
+|------|----------|
+| 市值 | 现价 × 股数 |
+| 浮盈亏 | 市值 - 总成本 |
+| 盈亏% | 浮盈亏 / 总成本 × 100% |
+| 股息率(TTM) | 从 quotes.dy 获取，无则显示 "--" |
+| 成本价 | 平均成本（含交易费用） |
+
+### 3.3 已清仓（closedRows）
+
+| 字段 | 计算方式 |
+|------|----------|
+| 交易盈亏 | realized_pnl |
+| 分红收入 | dividends_total |
+| 合计收益 | realized_pnl + dividends_total |
+
+### 3.4 分红明细（dividendRows）
+
+遍历所有持仓（当前+已清仓）的 dividends 数组，显示每股派息和总额。
 
 ---
 
-## 3. 功能介绍和实现方式
+## 4. 交互流程
 
-### 3.1 API 端点
+### 4.1 页面加载
+```
+路由 /overview → 组件挂载
+  → useDataStore 已加载数据（来自 App.vue 初始化）
+  → useOverviewStore 计算派生数据
+  → 渲染4个统计卡片 + 3个表格
+```
 
-| 方法 | 路径 | 说明 |
+### 4.2 刷新股价
+```
+点击 [刷新股价] 按钮
+  → useDataStore.refreshQuotesAndReload()
+  → POST /api/v2/quotes/refresh → 子进程采集行情
+  → 获取新数据后更新 quotes
+  → 比较 prevQuotes vs quotes → 涨跌方向
+  → 触发价格闪烁动画（红涨绿跌）
+  → 4秒后自动清除错误提示（如有）
+```
+
+### 4.3 涨跌闪烁动画
+```javascript
+function priceChangeDirection(code) {
+    const prev = prevQuotes[code]?.price
+    const curr = quotes[code]?.price
+    if (!prev || !curr || prev === curr) return ''
+    return curr > prev ? 'up' : 'down'
+}
+// CSS类: .price-up { animation: flashGreen }
+// CSS类: .price-down { animation: flashRed }
+// 红涨绿跌标准: up→红色(#dc2626), down→绿色(#16a34a)
+```
+
+---
+
+## 5. 数据依赖
+
+| 数据 | 来源 | 用途 |
 |------|------|------|
-| GET | `/api/v2/positions` | 完整持仓数据（当前+已清仓） |
-| GET | `/api/v2/positions/current` | 仅当前持仓 |
-| GET | `/api/v2/positions/closed` | 仅已清仓 |
-
-### 3.2 前端实现
-
-```vue
-<!-- Overview.vue 核心结构 -->
-<template>
-  <!-- 总览卡片 -->
-  <div class="summary-cards">
-    <Card title="总资产" :value="totalAsset" />
-    <Card title="总盈亏" :value="totalPnl" :class="pnlClass" />
-    <Card title="收益率" :value="totalReturnPct" />
-  </div>
-
-  <!-- 当前持仓表 -->
-  <DataTable :data="currentPositions">
-    <Column field="code" header="代码" />
-    <Column field="name" header="名称" />
-    <Column field="qty" header="持仓量" />
-    <Column field="avg_cost" header="成本价" />
-    <Column field="price" header="现价" />
-    <Column field="market_value" header="市值" />
-    <Column field="unrealized_pnl" header="浮盈亏" />
-  </DataTable>
-
-  <!-- 已清仓汇总 -->
-  <DataTable :data="closedPositions"> ... </DataTable>
-</template>
-```
-
-### 3.3 数据刷新
-
-- 首次加载：`loadAllData()` 并行请求 15 个 API
-- 手动刷新：切换至此页面时自动重新请求
-- 上传对账单后：持仓数据自动更新
+| currentPositions | GET /api/v2/positions/current | 当前持仓列表 |
+| closedPositions | GET /api/v2/positions/closed | 已清仓列表 |
+| quotes | GET /api/v2/quotes | 实时行情（含股息率） |
 
 ---
 
-## 4. 用户操作流程
+## 6. CSS 颜色约定
 
-### 4.1 查看持仓总览
+颜色使用全局 CSS 类和符号函数：
 
-```
-用户: 打开系统 → 默认进入 "持仓总览"
-
-页面数据:
-┌─────────────────────────────────────────┐
-│  总资产: ¥108,500    总盈亏: +¥8,500    │
-│  持仓市值: ¥85,000   现金: ¥23,500      │
-│  收益率: +8.5%                          │
-├─────────────────────────────────────────┤
-│  当前持仓                               │
-│  ┌──────┬────┬────┬──────┬───────┬────┐│
-│  │601166│兴业│1000│17.35 │17.85  │+500││
-│  │600036│招行│ 500│38.20 │39.10  │+450││
-│  └──────┴────┴────┴──────┴───────┴────┘│
-├─────────────────────────────────────────┤
-│  已清仓汇总                             │
-│  ┌──────┬────┬──────┬─────────┐        │
-│  │600050│联通│+¥1,200│+3.2%   │        │
-│  └──────┴────┴──────┴─────────┘        │
-└─────────────────────────────────────────┘
-```
-
-### 4.2 更新持仓数据
-
-```
-用户: 管理设置 → 上传广发对账单
-  → 自动解析 Excel → 写入 positions/trades/dividends 表
-  → 返回持仓总览 → 自动刷新显示最新数据
-```
+| 状态 | CSS 类 | 颜色 | 说明 |
+|------|--------|------|------|
+| 上涨 | `.up` | `#dc2626` 红色 | 价格/盈亏上升 |
+| 下跌 | `.down` | `#16a34a` 绿色 | 价格/盈亏下跌 |
+| 持平 | `.flat` | `#6b7280` 灰色 | 无变化 |

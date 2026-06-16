@@ -123,10 +123,19 @@
             <button class="tab-btn" :class="{ active: chartType === 'equity' }" @click="switchChart('equity')">📊 资金曲线</button>
           </div>
           <div class="chart-controls" v-if="chartType === 'intraday' && wl.length">
-            <select v-model="chartStock" @change="onChartStockChange" class="chart-select">
-              <option value="" disabled>选择股票</option>
-              <option v-for="s in wl" :key="s.code" :value="s.code">{{ s.name || s.code }} ({{ s.code }})</option>
-            </select>
+            <button class="tab-btn" @click="selectorOpen = !selectorOpen" style="position:relative">
+              📌 {{ activeCode ? (getStockName(activeCode) || activeCode) : '选择股票' }} ▾
+            </button>
+            <!-- Stock selector (watchlist only) -->
+            <div v-if="selectorOpen" class="ss-overlay" @click.self="selectorOpen = false">
+              <div class="ss-popup">
+                <div class="ss-popup-header">
+                  <span>选择股票 <em class="wl-count">{{ wl.length }} 只自选股</em></span>
+                  <button class="ss-close" @click="selectorOpen = false">✕</button>
+                </div>
+                <StockSelector mode="selector" watchlist-only v-model="selectedStock" @update:model-value="onSelectorPick" />
+              </div>
+            </div>
             <input type="date" v-model="chartDate" @change="onChartDateChange" :max="todayStr" class="chart-date" />
             <button class="btn-icon-refresh" @click="refreshIntraday" :disabled="refreshing" title="采集并刷新分时数据">
               <span class="refresh-icon" :class="{ spinning: refreshing }">&#x21bb;</span>
@@ -145,8 +154,8 @@
         <div v-if="chartType === 'intraday' && intradayData.length" class="chart-info">
           {{ intradayData[0]?.timestamp?.slice(11,16) || '' }} - {{ intradayData[intradayData.length-1]?.timestamp?.slice(11,16) || '' }} ({{ intradayData.length }} 个数据点)
         </div>
-        <div v-else-if="chartType === 'intraday' && chartStock" class="empty">该日期暂无分时数据</div>
-        <div v-else-if="chartType === 'intraday' && !chartStock" class="empty">请选择股票查看分时走势</div>
+        <div v-else-if="chartType === 'intraday' && activeCode" class="empty">该日期暂无分时数据</div>
+        <div v-else-if="chartType === 'intraday' && !activeCode" class="empty">请选择股票查看分时走势</div>
         <div v-else-if="chartType === 'equity' && !equityCurve.length" class="empty">暂无资金曲线数据</div>
       </div>
 
@@ -318,6 +327,8 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { storeToRefs } from 'pinia'
 import { usePaperStore } from '@/stores/paper.js'
 import { useDataStore } from '@/stores/data.js'
+import StockSelector from '@/components/StockSelector.vue'
+import IndustryGroupTabs from '@/components/IndustryGroupTabs.vue'
 
 const store = usePaperStore()
 const dataStore = useDataStore()
@@ -349,11 +360,27 @@ let autoPollTimer = null
 // Chart state
 const chartCanvas = ref(null)
 const chartType = ref('intraday')       // 'intraday' | 'equity'
-const chartStock = ref('')                // selected stock code for intraday
+const activeCode = ref('')              // selected stock code (shared with IndustryGroupTabs)
 const chartDate = ref('')                 // selected date for intraday
 const equityDays = ref(90)                // days window for equity curve
 const todayStr = new Date().toISOString().slice(0, 10)
 let chartInst = null
+
+// Stock selector popup (filtered to watchlist only)
+const selectorOpen = ref(false)
+const selectedStock = ref(null)
+
+function onSelectorPick(stock) {
+  if (!stock) return
+  activeCode.value = stock.code
+  selectorOpen.value = false
+  onChartStockChange()
+}
+
+function getStockName(code) {
+  const s = wl.value.find(x => x.code === code)
+  return s ? s.name : ''
+}
 
 // Data tab state
 const dataTab = ref('suggestions')        // 'suggestions' | 'trades' | 'positions' | 'history'
@@ -402,8 +429,8 @@ onMounted(async () => {
     ])
     // Init intraday chart with first watchlist stock
     if (wl.value.length > 0) {
-      chartStock.value = wl.value[0].code
-      await loadIntraday(chartStock.value, todayStr)
+      activeCode.value = wl.value[0].code
+      await loadIntraday(activeCode.value, todayStr)
     }
     // Load auto-executor status
     await refreshAutoStatus()
@@ -427,8 +454,8 @@ onMounted(async () => {
         refreshAutoStatus(),
       ])
       // 刷新分时数据
-      if (chartStock.value) {
-        await loadIntraday(chartStock.value, chartDate.value || todayStr)
+      if (activeCode.value) {
+        await loadIntraday(activeCode.value, chartDate.value || todayStr)
         await nextTick()
         renderChart()
       }
@@ -630,26 +657,35 @@ function switchChart(type) {
   nextTick(() => renderChart())
 }
 
+let switchCounter = 0
 async function onChartStockChange() {
-  if (!chartStock.value) return
-  await loadIntraday(chartStock.value, chartDate.value || todayStr)
+  const reqId = ++switchCounter
+  if (!activeCode.value) return
+  await loadIntraday(activeCode.value, chartDate.value || todayStr)
+  if (reqId !== switchCounter) return
   await loadSuggestions('', chartDate.value || todayStr)
+  if (reqId !== switchCounter) return
   await nextTick()
+  if (reqId !== switchCounter) return
   renderChart()
 }
 
 async function onChartDateChange() {
-  if (!chartStock.value) return
+  const reqId = ++switchCounter
+  if (!activeCode.value) return
   const date = chartDate.value || todayStr
   chartDate.value = date
-  await loadIntraday(chartStock.value, date)
+  await loadIntraday(activeCode.value, date)
+  if (reqId !== switchCounter) return
   await loadSuggestions('', date)
+  if (reqId !== switchCounter) return
   await nextTick()
+  if (reqId !== switchCounter) return
   renderChart()
 }
 
 async function refreshIntraday() {
-  if (!chartStock.value || refreshing.value) return
+  if (!activeCode.value || refreshing.value) return
   refreshing.value = true
   const date = chartDate.value || todayStr
   bannerMsg.value = ''
@@ -662,7 +698,7 @@ async function refreshIntraday() {
       return
     }
     // Step 2: reload intraday data from DB
-    await loadIntraday(chartStock.value, date)
+    await loadIntraday(activeCode.value, date)
     await loadSuggestions('', date)
     await nextTick()
     renderChart()
@@ -701,8 +737,8 @@ async function initAccount() {
     // Full refresh: account + positions + performance
     await Promise.all([loadAccount(), loadPositions(), loadPerformance(equityDays.value)])
     chartDate.value = todayStr
-    if (chartStock.value) {
-      await loadIntraday(chartStock.value, todayStr)
+    if (activeCode.value) {
+      await loadIntraday(activeCode.value, todayStr)
     }
     // 显式重绘分时图表
     await nextTick()
@@ -729,8 +765,8 @@ async function confirmReset() {
     // Full refresh
     await Promise.all([loadAccount(), loadPositions(), loadPerformance(equityDays.value)])
     // 显式重绘分时图表
-    if (chartStock.value) {
-      await loadIntraday(chartStock.value, todayStr)
+    if (activeCode.value) {
+      await loadIntraday(activeCode.value, todayStr)
       await nextTick()
       renderChart()
     }
@@ -873,6 +909,9 @@ function fmtReason(sug) {
 /* ── Layout ── */
 .page-content { max-width: 1200px; margin: 0 auto; padding: 24px; }
 
+/* ── Stock Tabs Row (IndustryGroupTabs) ── */
+.paper-tab-row { padding: 8px 0; background: #fff; }
+
 /* ── Status Banners ── */
 .status-banner {
   padding: 10px 16px; border-radius: 8px; margin-bottom: 12px;
@@ -979,6 +1018,44 @@ function fmtReason(sug) {
   padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px;
 }
 .chart-info { font-size: 11px; color: #9ca3af; margin-top: 4px; }
+
+/* Stock selector popup overlay */
+.ss-overlay {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,.35);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ss-popup {
+  background: #fff;
+  border-radius: 12px;
+  width: 480px;
+  max-width: 90vw;
+  max-height: 70vh;
+  box-shadow: 0 16px 48px rgba(0,0,0,.2);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.ss-popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid #e5e7eb;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2937;
+}
+.wl-count { font-weight: 400; color: #94a3b8; font-size: 12px; font-style: normal; margin-left: 6px; }
+.ss-close {
+  border: none; background: #f3f4f6; width: 28px; height: 28px;
+  border-radius: 6px; cursor: pointer; font-size: 14px; color: #6b7280;
+  display: flex; align-items: center; justify-content: center;
+}
+.ss-close:hover { background: #e5e7eb; color: #374151; }
 
 /* ── Data Section ── */
 .data-tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }

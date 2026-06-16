@@ -1,7 +1,8 @@
 # 11 — 专家分析
 
-> **前端页面**: `deliverables/v2/src/pages/Expert.vue` (12KB)
-> **路由**: `/expert` | **菜单**: 股票分析预测 → 专家分析
+> **页面文件**: `pages/Expert.vue` (12.55 KB) | **路由**: `/expert`
+> **Store**: `stores/data.js` (useDataStore) + `stores/industry.js` (useIndustryStore)
+> **组件**: `IndustryGroupTabs.vue` | **依赖**: Chart.js（雷达图+柱状图）
 
 ---
 
@@ -9,156 +10,157 @@
 
 ### 1.1 业务背景
 
-系统支持导入由 WorkBuddy 多 Agent 系统生成的股票专家分析报告，包含五维评分（技术/基本/新闻/情绪/风险）、多空辩论和综合建议，为用户提供比纯技术指标更全面的分析视角。
+除了 ML 模型预测，系统支持导入外部 AI 生成的专家分析报告。报告包含五维评分、多空辩论、风险评估等深度分析内容。
 
 ### 1.2 核心目标
 
 | 目标 | 说明 |
 |------|------|
-| 五维雷达图 | 技术面/基本面/新闻/情绪/风险评分可视化 |
-| 多空辩论 | 多头论据 vs 空头论据的权重对比 |
-| 综合建议 | BUY/HOLD/SELL 决策 + 入场价/目标价/止损 |
-| 报告导入 | POST API 或 CLI 导入 JSON 格式报告 |
+| 报告列表 | 按时间排序的专家报告选择器 |
+| 决策卡片 | 决策(BUY/HOLD/SELL)、信心、风险等级、目标价 |
+| 五维雷达 | 技术面/基本面/新闻面/情绪面/风险面评分 |
+| 多空辩论 | 多头 vs 空头论点及权重柱状图 |
+| 风险评估 | 激进/保守/中性三维评分三角图 |
+| 详细分析 | 技术/基本面/新闻/情绪等可折叠面板 |
 
 ---
 
-## 2. 技术方案深度分析
+## 2. 页面布局
 
-### 2.1 报告 Schema
+```
+┌─────────────────────────────────────────────────────────┐
+│ IndustryGroupTabs: [银行] [保险] [证券]                 │
+│ [兴业银行] [招商银行] [工商银行]                        │
+├─────────────────────────────────────────────────────────┤
+│ ┌─ 报告日期 ─────────┐ ┌─ 决策卡片 ──────────────────┐ │
+│ │ ◉ 2026-06-15       │ │  兴业银行 601166            │ │
+│ │ ○ 2026-06-08       │ │  BUY    信心: 85/100        │ │
+│ │ ○ 2026-06-01       │ │  风险等级: 2/5              │ │
+│ │                    │ │  建议仓位: 30%               │ │
+│ │                    │ │  入场价: 19.00               │ │
+│ │                    │ │  目标价: 21.50               │ │
+│ │                    │ │  止损价: 17.50               │ │
+│ │                    │ │  现价: 19.50                 │ │
+│ └────────────────────┘ └─────────────────────────────┘ │
+│                                                          │
+│ ┌─ 综合评分雷达图 ───┐ ┌─ 多空辩论 ─────────────────┐  │
+│ │     技术面          │ │  ████████ 多头(0.75)      │  │
+│ │    ╱    ╲           │ │  ████     空头(0.40)      │  │
+│ │ 风险面  基本面      │ │                          │  │
+│ │    ╲    ╱           │ └──────────────────────────┘  │
+│ │  情绪面 新闻面      │                                │
+│ └─────────────────────┘                                │
+│                                                          │
+│ ┌─ 风险评估三角图 ─────────────────────────────────────┐ │
+│ │     激进                                              │ │
+│ │     / \                                               │ │
+│ │    /   \                                              │ │
+│ │ 保守 ─── 中性                                         │ │
+│ └──────────────────────────────────────────────────────┘ │
+│                                                          │
+│ ┌─ [!] 技术面分析 (可折叠) ────────────────────────────┐ │
+│ │  MACD金叉、RSI中性、支撑位18.80、阻力位20.50          │ │
+│ └──────────────────────────────────────────────────────┘ │
+│ ┌─ [!] 基本面分析 (可折叠) ────────────────────────────┐ │
+│ │  PE 5.2、PB 0.62、ROE 12.3%、股息率 4.2%              │ │
+│ └──────────────────────────────────────────────────────┘ │
+│ ┌─ [!] 多空辩论结论 (可折叠) ──────────────────────────┐ │
+│ │  多头论点: 低估值+高股息+政策利好                     │ │
+│ │  空头论点: 净息差收窄+资产质量压力                    │ │
+│ └──────────────────────────────────────────────────────┘ │
+│ ┌─ [!] 风险评估结论 (可折叠) ──────────────────────────┐ │
+│ │  激进: 70  保守: 55  中性: 65                         │ │
+│ └──────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 3. 业务逻辑
+
+### 3.1 报告数据格式
+
+专家报告存储在 `expert_reports` 表的 `data` 字段（JSON）：
 
 ```json
 {
-  "date": "2026-06-05",
-  "stocks": {
-    "601166": {
-      "decision": "BUY",
-      "confidence": "中",
-      "risk_level": "低",
-      "position_pct": 30,
-      "entry_price": 17.30,
-      "target_price": 19.50,
-      "stop_loss": 16.00,
-      "scores": {
-        "technical": 6, "fundamental": 8,
-        "news": 5, "sentiment": 5, "risk": 7
-      },
-      "phase2": {
-        "bull_args": [{"point": "...", "weight": 9}],
-        "bear_args": [{"point": "...", "weight": 6}]
-      },
-      "summary": "..."
-    }
+  "code": "601166",
+  "date": "2026-06-15",
+  "decision": "buy",
+  "confidence": 85,
+  "risk_level": 2,
+  "summary": "兴业银行...",
+  "data": {
+    "scores": {
+      "technical": 75,
+      "fundamental": 85,
+      "news": 60,
+      "sentiment": 70,
+      "risk": 65
+    },
+    "debate": {
+      "bullish": [
+        {"argument": "低估值优势", "weight": 0.85},
+        {"argument": "高股息率", "weight": 0.75}
+      ],
+      "bearish": [
+        {"argument": "净息差收窄", "weight": 0.60}
+      ]
+    },
+    "risk_assessment": {
+      "aggressive": 70,
+      "conservative": 55,
+      "neutral": 65
+    },
+    "technical_analysis": "...",
+    "fundamental_analysis": "...",
+    "news_analysis": "...",
+    "sentiment_analysis": "..."
   }
 }
 ```
 
-### 2.2 导入验证规则
+### 3.2 五维雷达图
 
-| 字段 | 约束 |
-|------|------|
-| `decision` | 必须为 BUY/HOLD/SELL |
-| `confidence` | 高/中/低，否则自动修正 |
-| `scores.*` | 0-10 范围 |
-| `bull_args[i].point` | 必须为 string |
-| `bull_args[i].weight` | 1-10 |
-
-### 2.3 数据流
-
-```
-WorkBuddy 多 Agent
-  → POST /api/v2/expert/import (JSON body)
-  → import_expert_report.py（验证 + 标准化 + 写入）
-  → expert_reports 表 (date, report_data)
-  → GET /api/v2/expert
-  → Expert.vue 渲染
+```javascript
+// Chart.js Radar (雷达图)
+// 5个维度: technical, fundamental, news, sentiment, risk
+// 值范围: 0-100
+// 填充色: 半透明蓝色
 ```
 
----
+### 3.3 多空辩论柱状图
 
-## 3. 功能介绍和实现方式
-
-### 3.1 API 端点
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/v2/expert` | 获取专家报告列表 |
-| POST | `/api/v2/expert/import` | 导入新报告 |
-| POST | `/api/expert/import` | 旧版兼容接口 |
-
-### 3.2 后端实现
-
-```python
-# scripts/import_expert_report.py
-def validate_report(data: dict) -> tuple[bool, list]:
-    """验证报告格式，返回 (是否有效, 警告列表)"""
-    # 1. 根对象必须为 dict
-    # 2. stocks 不能为空
-    # 3. 逐股票验证 7 个必需字段
-    # 4. 枚举值自动修正（confidence/risk_level → '中'）
-    # 5. 评分裁剪到 0-10
-
-def import_report(data: dict) -> dict:
-    """导入报告到 expert_reports 表"""
-    # INSERT INTO expert_reports (date, report_data)
-    # report_data 以 JSON 文本存储
+```javascript
+// Chart.js Bar (柱状图)
+// 多头用红色 (#dc2626)，空头用绿色 (#16a34a)
+// 按权重排序显示论点
 ```
 
-### 3.3 前端实现
+### 3.4 风险评估三角图
 
-```vue
-<!-- Expert.vue 核心结构 -->
-<template>
-  <!-- 股票选择 -->
-  <Dropdown v-model="selectedCode" />
-
-  <!-- 五维雷达图 -->
-  <RadarChart :data="scores" />
-
-  <!-- 综合建议卡片 -->
-  <DecisionCard>
-    <Badge :type="decision">{{ decision }}</Badge>
-    <div>入场: ¥{{ entry_price }}</div>
-    <div>目标: ¥{{ target_price }}</div>
-    <div>止损: ¥{{ stop_loss }}</div>
-  </DecisionCard>
-
-  <!-- 多空辩论 -->
-  <BullBearDebate>
-    <BullArgs :args="bull_args" />
-    <BearArgs :args="bear_args" />
-    <Verdict :text="verdict" />
-  </BullBearDebate>
-
-  <!-- 风险提示 -->
-  <RiskSummary :text="summary" :risks="risks" />
-</template>
+```javascript
+// 三个角: 激进(aggressive)、保守(conservative)、中性(neutral)
+// 各角数值 0-100
+// 等边三角形内标注评分
 ```
 
 ---
 
-## 4. 用户操作流程
-
-### 4.1 查看专家报告
+## 4. 交互流程
 
 ```
-用户: 导航栏 "股票分析预测" → "专家分析"
-  → 下拉选择股票 "兴业银行"
-  → 显示五维雷达图（技术6/基本8/新闻5/情绪5/风险7）
-  → 综合建议: BUY · 中置信 · 低风险
-  → 入场 ¥17.30 | 目标 ¥19.50 | 止损 ¥16.00
-  → 多空辩论: 多头权重9分 vs 空头权重6分
-  → 总结: "兴业银行基本面稳健，技术面出现金叉信号..."
+挂载 → IndustryGroupTabs 选择股票
+  → 从 useDataStore.expertReports 过滤该股票报告
+  → 侧边栏列出报告日期列表
+  → 选中报告 → 渲染决策卡片 / 雷达图 / 辩论 / 风险
+  → 展开分析面板查看更多详情
 ```
 
-### 4.2 导入新报告
+---
 
-```
-方式1（API）:
-  管理设置 → 点击 [导入专家报告]
-  → POST /api/v2/expert/import
-  → Body: 专家报告 JSON
-  → 返回 {success: true, message: "报告已导入"}
+## 5. 数据依赖
 
-方式2（CLI）:
-  python scripts/import_expert_report.py report.json
-```
+| API | 用途 |
+|-----|------|
+| GET /api/v2/expert | 专家报告列表 |

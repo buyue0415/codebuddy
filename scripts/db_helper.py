@@ -1116,6 +1116,22 @@ def clear_today_predictions(date):
     db.execute("DELETE FROM daily_predictions WHERE date>=?", [date])
     db.commit(); db.close()
 
+def clear_stock_predictions(code, date):
+    """Clear predictions for a single stock where date >= date."""
+    db = get_db()
+    db.execute(
+        "DELETE FROM prediction_signals WHERE pred_id IN "
+        "(SELECT id FROM daily_predictions WHERE code=? AND date>=?)",
+        [code, date])
+    db.execute(
+        "DELETE FROM prediction_hourly WHERE pred_id IN "
+        "(SELECT id FROM daily_predictions WHERE code=? AND date>=?)",
+        [code, date])
+    db.execute(
+        "DELETE FROM daily_predictions WHERE code=? AND date>=?",
+        [code, date])
+    db.commit(); db.close()
+
 def upsert_learning_params(code, lp):
     import json
     db = get_db()
@@ -2211,6 +2227,30 @@ def upsert_company_business(record):
         db.close()
 
 
+def auto_fetch_company_business(code, name):
+    """Fetch company business data for a single stock and save to DB.
+
+    Uses the fetcher chain (Westock → NeoData → EastMoney → Sina → Tencent).
+    Silently fails if no fetcher is available or fetch returns empty.
+    """
+    try:
+        from fetchers import get_available_fetcher
+        fetcher = get_available_fetcher()
+        if not fetcher:
+            return False
+        biz = fetcher.fetch_business(code)
+        if biz and biz.get('industry'):
+            biz['code'] = biz.get('code', code)
+            biz['name'] = biz.get('name', name)
+            biz['source'] = 'web'
+            upsert_company_business(biz)
+            return True
+        return False
+    except Exception as e:
+        print(f'[auto_fetch_company_business] {code}: {e}')
+        return False
+
+
 def get_graph_data(code=None, type_filter=None):
     """Build graph nodes+edges data for the frontend.
 
@@ -2285,7 +2325,79 @@ def get_graph_data(code=None, type_filter=None):
         biz = get_company_business(stock_codes)
         for n in node_map.values():
             if n['code'] in biz:
+                n['label'] = biz[n['code']].get('name', n['label'])  # 使用股票真实名称，而非关联方名称
                 n['industry'] = biz[n['code']].get('industry', '')
                 n['business'] = biz[n['code']].get('business', '')
 
     return {'nodes': list(node_map.values()), 'edges': edges}
+
+
+def get_industries_stocks():
+    """获取按行业分组的股票列表。
+
+    从 company_business 表查询有行业信息的股票，
+    联合 stocks 表获取市场标识，
+    通过子查询标记是否已在自选股中。
+
+    Returns:
+        list of dict: [{industry, stock_count, stocks: [{code, name, market, in_watchlist}]}]
+        按行业名称排序，无行业信息的自选股放入"未分类"组。
+    """
+    db = get_db()
+    try:
+        wl_codes = set(r['code'] for r in
+                       db.execute("SELECT code FROM watchlist").fetchall())
+
+        rows = db.execute("""
+            SELECT cb.code, cb.name, cb.industry, COALESCE(s.market, 'sh') as market
+            FROM company_business cb
+            LEFT JOIN stocks s ON cb.code = s.code
+            WHERE cb.industry != '' AND cb.industry IS NOT NULL
+            ORDER BY cb.industry, cb.code
+        """).fetchall()
+
+        from collections import OrderedDict
+        groups = OrderedDict()
+        for r in rows:
+            ind = r['industry']
+            if ind not in groups:
+                groups[ind] = {'industry': ind, 'stock_count': 0, 'stocks': []}
+            groups[ind]['stocks'].append({
+                'code': r['code'],
+                'name': r['name'],
+                'market': r['market'],
+                'in_watchlist': r['code'] in wl_codes,
+            })
+            groups[ind]['stock_count'] += 1
+
+        # Collect uncategorized watchlist stocks
+        watchlist_rows = db.execute(
+            "SELECT code, name, market FROM watchlist"
+        ).fetchall()
+        uncategorized = []
+        wl_codes_with_biz = set()
+        for group in groups.values():
+            for s in group['stocks']:
+                if s['in_watchlist']:
+                    wl_codes_with_biz.add(s['code'])
+        for r in watchlist_rows:
+            if r['code'] not in wl_codes_with_biz:
+                uncategorized.append({
+                    'code': r['code'],
+                    'name': r['name'],
+                    'market': r['market'],
+                    'in_watchlist': True,
+                })
+
+        result = list(groups.values())
+        if uncategorized:
+            result.append({
+                'industry': '未分类',
+                'stock_count': len(uncategorized),
+                'stocks': uncategorized,
+            })
+
+        return result
+    finally:
+        db.close()
+
