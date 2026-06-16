@@ -1605,6 +1605,19 @@ def init_backtest_tables():
             CREATE INDEX IF NOT EXISTS idx_ps_date ON paper_suggestions(date);
             CREATE INDEX IF NOT EXISTS idx_ps_code ON paper_suggestions(code);
             CREATE INDEX IF NOT EXISTS idx_ps_date_exec ON paper_suggestions(date, executed);
+            CREATE TABLE IF NOT EXISTS paper_suggestions_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, code TEXT NOT NULL,
+                action TEXT NOT NULL, qty INTEGER NOT NULL DEFAULT 0,
+                price REAL NOT NULL DEFAULT 0.0, confidence REAL NOT NULL DEFAULT 0.0,
+                direction TEXT NOT NULL, entry_zone REAL, reason TEXT,
+                signals_bullish INTEGER DEFAULT 0, signals_bearish INTEGER DEFAULT 0,
+                position_weight REAL DEFAULT 0.0, pred_id INTEGER,
+                snapshot_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                FOREIGN KEY (code) REFERENCES stocks(code)
+            );
+            CREATE INDEX IF NOT EXISTS idx_psh_date ON paper_suggestions_history(date);
+            CREATE INDEX IF NOT EXISTS idx_psh_code ON paper_suggestions_history(code);
+            CREATE INDEX IF NOT EXISTS idx_psh_date_code ON paper_suggestions_history(date, code);
             -- Intraday quotes for minute-level price tracking
             CREATE TABLE IF NOT EXISTS intraday_quotes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1682,6 +1695,62 @@ def get_paper_daily_snapshots(days=90):
     rows = db.execute("SELECT * FROM paper_daily_snapshot ORDER BY date DESC LIMIT ?", [days]).fetchall()
     db.close()
     return [dict(r) for r in rows]
+
+
+def get_paper_suggestions_history(date=None, code=None, days=30):
+    """查询历史建议快照。可按日期、股票筛选。返回按日期倒序的结果。"""
+    db = get_db()
+    q = """SELECT psh.*, s.name
+           FROM paper_suggestions_history psh
+           LEFT JOIN stocks s ON psh.code=s.code
+           WHERE 1=1"""
+    params = []
+    if date:
+        q += " AND psh.date=?"
+        params.append(date)
+    if code:
+        q += " AND psh.code=?"
+        params.append(code)
+    q += " ORDER BY psh.date DESC, psh.id DESC"
+    if not date and not code:
+        # 无筛选时限制返回行数
+        q += f" LIMIT ?"
+        params.append(days * 20)
+    rows = db.execute(q, params).fetchall()
+    db.close()
+    return [dict(r) for r in rows]
+
+
+def save_suggestions_snapshot(db, date):
+    """将 paper_suggestions 中当天的建议快照到 history 表（幂等：同天同股不会重复插入）。"""
+    rows = db.execute(
+        """SELECT date, code, action, qty, price, confidence, direction,
+                  entry_zone, reason, signals_bullish, signals_bearish,
+                  position_weight, pred_id
+           FROM paper_suggestions WHERE date=?""",
+        [date]
+    ).fetchall()
+    saved = 0
+    for r in rows:
+        d = dict(r)
+        # 检查是否已存在同天同股的历史记录
+        exists = db.execute(
+            "SELECT id FROM paper_suggestions_history WHERE date=? AND code=?",
+            [d['date'], d['code']]
+        ).fetchone()
+        if exists:
+            continue
+        db.execute(
+            """INSERT INTO paper_suggestions_history
+               (date,code,action,qty,price,confidence,direction,entry_zone,reason,
+                signals_bullish,signals_bearish,position_weight,pred_id,snapshot_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now','localtime'))""",
+            [d['date'], d['code'], d['action'], d['qty'], d['price'],
+             d['confidence'], d['direction'], d.get('entry_zone'), d.get('reason', ''),
+             d['signals_bullish'], d['signals_bearish'], d['position_weight'], d['pred_id']]
+        )
+        saved += 1
+    return saved
 
 def insert_backtest_run(status='running', train_window=252, test_window=21, stock_codes='', total_stocks=0):
     db = get_db()

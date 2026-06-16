@@ -74,8 +74,7 @@ const routes = [
   },
   {
     path: '/paper/history',
-    name: 'paper-history',
-    component: () => import('@/pages/PaperHistory.vue'),
+    redirect: '/paper',
   },
 ]
 

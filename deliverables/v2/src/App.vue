@@ -72,7 +72,6 @@ const navGroups = [
   { id: 'paper',    label: '模拟交易', items: [
     { route: '/backtest', label: '回测分析' },
     { route: '/paper', label: '纸面交易' },
-    { route: '/paper/history', label: '交易历史' },
   ]},
 ]
 
@@ -80,7 +79,7 @@ const routeGroupMap = {
   '/overview': 'trade', '/trades': 'trade', '/fees': 'trade', '/manage': 'trade',
   '/intelligence': 'analysis', '/expert': 'analysis',
   '/news': 'info', '/stock-data': 'info', '/kline': 'info', '/pattern-rules': 'info', '/company-graph': 'info',
-  '/backtest': 'paper', '/paper': 'paper', '/paper/history': 'paper',
+  '/backtest': 'paper', '/paper': 'paper',
 }
 
 const activeGroup = computed(() => routeGroupMap[route.path] || 'trade')

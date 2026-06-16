@@ -67,6 +67,32 @@ export async function executePaperTrading() {
   return apiCall('POST', '/api/v2/paper/execute')
 }
 
+export async function generatePaperSuggestions() {
+  return apiCall('POST', '/api/v2/paper/generate')
+}
+
+export async function fetchAutoStatus() {
+  return apiCall('GET', '/api/v2/paper/auto-status')
+}
+
+export async function fetchSuggestionsHistory(date, code, days) {
+  const params = new URLSearchParams()
+  if (date) params.set('date', date)
+  if (code) params.set('code', code)
+  if (days) params.set('days', days)
+  return apiCall('GET', '/api/v2/paper/suggestions-history?' + params.toString())
+}
+
+// ── Verify & Collect ──
+
+export async function fetchPaperVerify() {
+  return apiCall('GET', '/api/v2/paper/verify')
+}
+
+export async function collectIntradayQuotes() {
+  return apiCall('POST', '/api/v2/paper/intraday/collect')
+}
+
 // ── Intraday Quotes ──
 
 export async function fetchIntraday(code, date = '') {

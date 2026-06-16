@@ -43,13 +43,51 @@ def calc_dividend_yield(code: str, price: float) -> float:
         return 0
     try:
         db = get_db()
-        rows = db.execute(
-            "SELECT sum(amount) as total FROM dividends WHERE code=? AND date >= date('now', '-1 year')",
+        div_rows = db.execute(
+            "SELECT date, amount, price, source, "
+            "COALESCE(ex_date, date(date, '-3 days')) as ex_date "
+            "FROM dividends WHERE code=? AND "
+            "COALESCE(ex_date, date(date, '-3 days')) >= date('now', '-1 year') AND "
+            "COALESCE(ex_date, date(date, '-3 days')) < date('now') "
+            "ORDER BY date DESC",
             [code]
         ).fetchall()
         db.close()
-        if rows and rows[0][0]:
-            return round(rows[0][0] / price * 100, 2)
+        if not div_rows:
+            return 0
+
+        # Use the same per_share calculation as db_helper._calc_dy_at_date
+        from db_helper import _get_dividend_per_share
+
+        raw_events = []
+        for r in div_rows:
+            source = r['source'] if r['source'] else 'statement'
+            amount_ = float(r['amount']) if r['amount'] else 0.0
+            div_price_ = float(r['price']) if r['price'] else None
+            ps = _get_dividend_per_share(code, r['date'], amount_, div_price_, source)
+            if ps <= 0:
+                continue
+            ex_date_ = r['ex_date'] if r['ex_date'] else r['date']
+            raw_events.append({'ex_date': ex_date_, 'per_share': ps})
+
+        # Dedup: same event within same month
+        dedup = set()
+        total_per_share = 0.0
+        for ev in raw_events:
+            key = ev['ex_date'][:7]
+            if key in dedup:
+                continue
+            dedup.add(key)
+            total_per_share += ev['per_share']
+
+        # Sanity cap (same as _calc_dy_at_date)
+        MAX_TTM = 10.0
+        if total_per_share > MAX_TTM:
+            total_per_share = MAX_TTM
+
+        if total_per_share <= 0:
+            return 0
+        return round(total_per_share / price * 100, 2)
     except Exception:
         pass
     return 0

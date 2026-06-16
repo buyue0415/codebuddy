@@ -7,9 +7,14 @@ import {
   fetchPaperAccount, fetchPaperPositions, fetchPaperSuggestions,
   fetchPaperTrades, fetchPaperPerformance, resetPaperAccount,
   executePaperTrading,
+  generatePaperSuggestions,
+  fetchAutoStatus,
+  fetchSuggestionsHistory,
   runBacktest, fetchBacktestStatus, stopBacktest as apiStopBacktest,
   fetchBacktestResults, fetchBacktestHistory,
   fetchIntraday,
+  fetchPaperVerify,
+  collectIntradayQuotes,
 } from '@/api/paper.js'
 
 export const usePaperStore = defineStore('paper', () => {
@@ -39,6 +44,18 @@ export const usePaperStore = defineStore('paper', () => {
   const backtestResults = ref(null)
   const backtestHistory = ref([])
 
+  // Verify
+  const verifyResult = ref(null)
+  const verifyLoading = ref(false)
+
+  // Auto-executor status
+  const autoStatus = ref(null)       // {running, last_check, suggestions_generated, ...}
+  const autoStatusLoading = ref(false)
+
+  // Suggestions history for cross-day comparison
+  const suggestionsHistory = ref([])
+  const suggestionsHistoryLoading = ref(false)
+
   const isInitialized = computed(() => account.value?.initialized === true)
 
   async function loadAccount() {
@@ -59,6 +76,16 @@ export const usePaperStore = defineStore('paper', () => {
       if (r.market_status) {
         marketStatus.value = r.market_status
       }
+    }
+  }
+
+  async function loadSuggestionsHistory(date = '', code = '', days = 30) {
+    suggestionsHistoryLoading.value = true
+    try {
+      const r = await fetchSuggestionsHistory(date || undefined, code || undefined, days)
+      if (r?.success) suggestionsHistory.value = r.data || []
+    } finally {
+      suggestionsHistoryLoading.value = false
     }
   }
 
@@ -164,13 +191,70 @@ export const usePaperStore = defineStore('paper', () => {
     return r
   }
 
+  async function verifyConsistency() {
+    verifyLoading.value = true
+    verifyResult.value = null
+    try {
+      const r = await fetchPaperVerify()
+      if (r?.success) {
+        verifyResult.value = r.data
+      } else {
+        verifyResult.value = { consistent: false, errors: [r?.error || '校验请求失败'] }
+      }
+    } catch (e) {
+      verifyResult.value = { consistent: false, errors: [e.message || '校验异常'] }
+    } finally {
+      verifyLoading.value = false
+    }
+    return verifyResult.value
+  }
+
+  async function collectAndRefreshIntraday() {
+    const r = await collectIntradayQuotes()
+    if (!r?.success) {
+      return r
+    }
+    // After collection, reload intraday data
+    if (intradayCode.value) {
+      const date = selectedDate.value || new Date().toISOString().slice(0, 10)
+      const dataR = await fetchIntraday(intradayCode.value, date)
+      if (dataR?.success && dataR.data) {
+        intradayData.value = dataR.data.data || []
+        availableDates.value = dataR.data.available_dates || []
+      }
+    }
+    return r
+  }
+
+  async function generateSuggestions() {
+    return await generatePaperSuggestions()
+  }
+
+  async function refreshAutoStatus() {
+    autoStatusLoading.value = true
+    try {
+      const r = await fetchAutoStatus()
+      if (r?.success) autoStatus.value = r.data
+    } catch (e) {
+      console.warn('refreshAutoStatus failed:', e)
+    } finally {
+      autoStatusLoading.value = false
+    }
+    return autoStatus.value
+  }
+
   return {
     loading, error, account, positions, suggestions, trades, tradesTotal,
     performance, equityCurve, isInitialized,
     intradayData, intradayCode, selectedDate, availableDates, marketStatus,
     backtestStatus, backtestRunId, backtestProgress, backtestResults, backtestHistory,
+    verifyResult, verifyLoading, autoStatus, autoStatusLoading,
+    suggestionsHistory, suggestionsHistoryLoading,
     loadAccount, loadPositions, loadSuggestions, loadTrades, loadPerformance,
     resetAccount, loadIntraday, executeTrading,
     startBacktest, pollBacktestStatus, stopBacktest, loadBacktestResults, loadBacktestHistory,
+    verifyConsistency,
+    collectAndRefreshIntraday,
+    generateSuggestions, refreshAutoStatus, loadSuggestionsHistory,
   }
 })
