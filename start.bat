@@ -15,7 +15,7 @@ echo.
 
 :: Start FastAPI backend
 echo [1/2] 启动 FastAPI 后端 (端口 8766)...
-start "FastAPI" /min C:\Users\28312\AppData\Local\Programs\Python\Python312\python.exe server_v2.py
+start "FastAPI" /min python server_v2.py
 timeout /t 3 /nobreak >nul
 
 :: Start Vite frontend
