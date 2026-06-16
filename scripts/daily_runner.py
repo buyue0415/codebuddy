@@ -3,7 +3,9 @@ import subprocess, os, sys, time
 from datetime import datetime
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-PYTHON = r"C:\Users\28312\AppData\Local\Programs\Python\Python312\python.exe"
+sys.path.insert(0, os.path.join(ROOT, 'scripts'))
+from env_paths import get_python
+PYTHON = get_python()
 LOG_PATH = os.path.join(ROOT, "data", "sync_log.txt")
 
 def log(msg):
@@ -17,8 +19,6 @@ def log(msg):
         pass
 
 log("=== Daily Sync Runner START ===")
-
-# Step 1: Run sync_all.py
 log("Running sync_all.py...")
 start = time.time()
 try:
@@ -28,14 +28,12 @@ try:
     )
     elapsed = time.time() - start
     ok = result.returncode == 0
-    
     if result.stdout:
         for line in result.stdout.strip().split("\n")[-20:]:
             print(f"  stdout: {line}")
     if result.stderr:
         for line in result.stderr.strip().split("\n")[-10:]:
             print(f"  stderr: {line}")
-    
     log(f"sync_all.py {'OK' if ok else 'FAILED'} (exit={result.returncode}, {elapsed:.0f}s)")
 except subprocess.TimeoutExpired:
     log("sync_all.py TIMEOUT after 300s")
@@ -44,7 +42,6 @@ except Exception as e:
     log(f"sync_all.py ERROR: {e}")
     ok = False
 
-# Step 2: Run backfill fix if needed
 log("Checking for stale predictions...")
 try:
     import sqlite3
@@ -57,7 +54,6 @@ try:
     ).fetchone()
     sc = stale['c'] if stale else 0
     db.close()
-    
     if sc > 0:
         log(f"Found {sc} stale predictions, running backfill...")
         result2 = subprocess.run(

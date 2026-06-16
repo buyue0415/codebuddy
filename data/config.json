@@ -1,7 +1,7 @@
 {
-  "account": "51312640",
-  "broker": "广发证券",
-  "server_port": 8765,
+  "account": "",
+  "broker": "",
+  "server_port": 8766,
   "fee_rates": {
     "transfer_fee_per_1000": 1.0,
     "regulatory_fee_rate": 0.00002,

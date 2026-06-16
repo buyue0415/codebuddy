@@ -1,5 +1,5 @@
 """Build complete A-share stock DB from SZ + SH lists"""
-import json, os, pandas as pd
+import json, os, sys, pandas as pd
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DST = os.path.join(ROOT, "data", "a_stocks.json")
@@ -68,7 +68,17 @@ def gen_py(name):
 all_stocks = {}
 
 # Source 1: SZ stocks
-df_sz = pd.read_excel(r"C:\Users\28312\Desktop\A股列表.xlsx", header=0)
+sz_path = os.environ.get('SZ_STOCK_LIST') or (sys.argv[1] if len(sys.argv) > 1 else None)
+if not sz_path or not os.path.exists(sz_path):
+    print("请提供深证A股列表文件路径: python build_stock_db.py <sz_excel> [sh_excel]")
+    print("或设置环境变量 SZ_STOCK_LIST 和 SH_STOCK_LIST")
+    sys.exit(1)
+sh_path = os.environ.get('SH_STOCK_LIST') or (sys.argv[2] if len(sys.argv) > 2 else None)
+if not sh_path or not os.path.exists(sh_path):
+    print("请提供上证A股列表文件路径: python build_stock_db.py <sz_excel> <sh_excel>")
+    sys.exit(1)
+
+df_sz = pd.read_excel(sz_path, header=0)
 for _, r in df_sz.iterrows():
     code = str(int(r.iloc[4])).zfill(6)
     name = str(r.iloc[5]).replace('\u3000','').replace(' ','').replace('Ａ','A').replace('Ｂ','B')
@@ -77,10 +87,10 @@ for _, r in df_sz.iterrows():
 print(f"SZ: {len(all_stocks)}")
 
 # Source 2: SH stocks
-df_sh = pd.read_excel(r"C:\Users\28312\Desktop\上A股列表.xls", header=0)
+df_sh = pd.read_excel(sh_path, header=0)
 for _, r in df_sh.iterrows():
     code = str(int(r.iloc[0])).zfill(6)
-    name = str(r.iloc[2]).replace('\u3000','').replace(' ','')
+    name = str(r.iloc[2]).replace('\u3000','').replace(' ','').replace('Ａ','A').replace('Ｂ','B')
     if len(code) == 6 and code.isdigit() and name:
         all_stocks[code] = {"code": code, "name": name, "market": "sh", "py": gen_py(name)}
 print(f"SH: {len(all_stocks)}")

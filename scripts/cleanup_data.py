@@ -1,8 +1,11 @@
 """清理僵尸数据 + 修复字段"""
-import json
+import json, os
 from datetime import datetime
 
-with open('data/system_data.json', 'r', encoding='utf-8') as f:
+ROOT = os.path.dirname(os.path.abspath(__file__))
+DATA_PATH = os.path.join(ROOT, '..', 'data', 'system_data.json')
+
+with open(DATA_PATH, 'r', encoding='utf-8') as f:
     d = json.load(f)
 
 today = datetime.now().strftime('%Y-%m-%d')
@@ -41,7 +44,7 @@ for code, lp in d.get('learning_params', {}).items():
         lp['learning_rate'] = 0.01
         changes.append(f"learning_params.{code}.learning_rate = 0.01 (补)")
 
-with open('data/system_data.json', 'w', encoding='utf-8') as f:
+with open(DATA_PATH, 'w', encoding='utf-8') as f:
     json.dump(d, f, ensure_ascii=False, indent=2)
 
 print('=== 清理完成 ===')
