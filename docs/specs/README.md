@@ -77,6 +77,7 @@ start.bat
 | [12-news-feed.md](./12-news-feed.md) | News.vue | 新闻动态：自选股新闻抓取、情感分析、重大性判断 |
 | [13-kline-charts.md](./13-kline-charts.md) | Kline.vue | K线走势：日K/月K线图表、形态识别 |
 | [14-pattern-rules.md](./14-pattern-rules.md) | PatternRules.vue | 形态规则：33条K线形态规则管理、形态扫描 |
+| [18-company-relations-graph.md](./18-company-relations-graph.md) | CompanyGraph.vue 🔹新增 | 公司关系图谱：股权结构/高管关联/供应链/竞争关系网络可视化 |
 
 ### 模拟交易（菜单分组四）
 
@@ -114,7 +115,8 @@ App.vue 导航栏
 ├── 🔹 股票信息收集
 │   ├── 新闻动态     → /news
 │   ├── K线走势      → /kline
-│   └── 形态规则     → /pattern-rules
+│   ├── 形态规则     → /pattern-rules
+│   └── 公司关系图谱  → /company-graph  🔹新增
 └── 🔹 模拟交易
     ├── 回测分析     → /backtest
     ├── 纸面交易     → /paper
@@ -179,6 +181,7 @@ flowchart LR
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
+| v4.2 | 2026-06-15 | 新增 18-company-relations-graph 公司关系图谱规格文档 |
 | v4.1 | 2026-06-12 | 新增 intraday_quotes 分钟数据及日K线降级方案文档 |
 | v4.0 | 2026-06-06 | 按菜单结构完全重写，22个文件覆盖全部功能 |
 | v3.0 | 2026-06-06 | 移除旧版代码引用，V2纯系统架构 |

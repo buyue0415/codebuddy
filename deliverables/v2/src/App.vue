@@ -67,6 +67,7 @@ const navGroups = [
     { route: '/stock-data', label: '股票数据' },
     { route: '/kline', label: 'K线走势' },
     { route: '/pattern-rules', label: '形态规则' },
+    { route: '/company-graph', label: '公司关系图谱' },
   ]},
   { id: 'paper',    label: '模拟交易', items: [
     { route: '/backtest', label: '回测分析' },
@@ -78,7 +79,7 @@ const navGroups = [
 const routeGroupMap = {
   '/overview': 'trade', '/trades': 'trade', '/fees': 'trade', '/manage': 'trade',
   '/intelligence': 'analysis', '/expert': 'analysis',
-  '/news': 'info', '/stock-data': 'info', '/kline': 'info', '/pattern-rules': 'info',
+  '/news': 'info', '/stock-data': 'info', '/kline': 'info', '/pattern-rules': 'info', '/company-graph': 'info',
   '/backtest': 'paper', '/paper': 'paper', '/paper/history': 'paper',
 }
 

@@ -1977,3 +1977,246 @@ def count_pattern_rules() -> int:
         return db.execute("SELECT COUNT(*) as c FROM pattern_rules").fetchone()['c']
     finally:
         db.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Company Relations Graph — tables init + CRUD
+# ═══════════════════════════════════════════════════════════════════════
+
+def init_company_relations_tables():
+    """Create company_relations and company_business tables. Idempotent."""
+    db = get_db()
+    try:
+        db.executescript("""
+            CREATE TABLE IF NOT EXISTS company_relations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT NOT NULL,
+                related_code TEXT NOT NULL,
+                related_name TEXT NOT NULL,
+                relation_type TEXT NOT NULL,
+                relation_subtype TEXT DEFAULT '',
+                relation_detail TEXT DEFAULT '',
+                weight REAL DEFAULT 1.0,
+                direction TEXT DEFAULT '',
+                extra_data TEXT DEFAULT '',
+                source TEXT DEFAULT 'web',
+                updated_at TEXT DEFAULT (datetime('now','localtime')),
+                UNIQUE(code, related_code, relation_type, relation_subtype)
+            );
+            CREATE INDEX IF NOT EXISTS idx_cr_code ON company_relations(code);
+            CREATE INDEX IF NOT EXISTS idx_cr_type ON company_relations(relation_type);
+            CREATE INDEX IF NOT EXISTS idx_cr_relcode ON company_relations(related_code);
+
+            CREATE TABLE IF NOT EXISTS company_business (
+                code TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                industry TEXT DEFAULT '',
+                business TEXT DEFAULT '',
+                source TEXT DEFAULT 'web',
+                updated_at TEXT DEFAULT (datetime('now','localtime'))
+            );
+        """)
+        db.commit()
+    finally:
+        db.close()
+
+
+def get_company_relations(code=None, type_filter=None):
+    """Get company relations with optional filters.
+
+    Args:
+        code: Stock code to filter by (optional)
+        type_filter: Relation type filter: equity/executive/supply/competition (optional)
+    Returns:
+        List of dict rows
+    """
+    db = get_db()
+    try:
+        sql = "SELECT * FROM company_relations WHERE 1=1"
+        params = []
+        if code:
+            sql += " AND (code=? OR related_code=?)"
+            params.extend([code, code])
+        if type_filter:
+            sql += " AND relation_type=?"
+            params.append(type_filter)
+        sql += " ORDER BY relation_type, weight DESC"
+        return [dict(r) for r in db.execute(sql, params).fetchall()]
+    finally:
+        db.close()
+
+
+def upsert_company_relation(record):
+    """Insert or update a company relation record."""
+    db = get_db()
+    try:
+        db.execute("""
+            INSERT OR REPLACE INTO company_relations
+                (code, related_code, related_name, relation_type, relation_subtype,
+                 relation_detail, weight, direction, extra_data, source)
+            VALUES (?,?,?,?,?,?,?,?,?,?)
+        """, [
+            record.get('code'),
+            record.get('related_code'),
+            record.get('related_name', ''),
+            record.get('relation_type'),
+            record.get('relation_subtype', ''),
+            record.get('relation_detail', ''),
+            record.get('weight', 1.0),
+            record.get('direction', ''),
+            record.get('extra_data', ''),
+            record.get('source', 'web'),
+        ])
+        db.commit()
+    finally:
+        db.close()
+
+
+def clear_company_relations(type_filter=None):
+    """Clear all company relations, optionally by type."""
+    db = get_db()
+    try:
+        if type_filter:
+            db.execute("DELETE FROM company_relations WHERE relation_type=?", [type_filter])
+        else:
+            db.execute("DELETE FROM company_relations")
+        db.commit()
+    finally:
+        db.close()
+
+
+def delete_company_relations_by_code(code, type_filter=None):
+    """Delete all relations for a specific stock code."""
+    db = get_db()
+    try:
+        sql = "DELETE FROM company_relations WHERE code=? OR related_code=?"
+        params = [code, code]
+        if type_filter:
+            sql += " AND relation_type=?"
+            params.append(type_filter)
+        db.execute(sql, params)
+        db.commit()
+    finally:
+        db.close()
+
+
+def get_company_business(codes=None):
+    """Get company business info.
+
+    Args:
+        codes: List of stock codes, or None for all
+    Returns:
+        Dict of {code: {name, industry, business}}
+    """
+    db = get_db()
+    try:
+        if codes:
+            placeholders = ','.join('?' for _ in codes)
+            rows = db.execute(
+                f"SELECT * FROM company_business WHERE code IN ({placeholders})", codes
+            ).fetchall()
+        else:
+            rows = db.execute("SELECT * FROM company_business").fetchall()
+        return {r['code']: dict(r) for r in rows}
+    finally:
+        db.close()
+
+
+def upsert_company_business(record):
+    """Insert or update company business info."""
+    db = get_db()
+    try:
+        db.execute("""
+            INSERT OR REPLACE INTO company_business
+                (code, name, industry, business, source)
+            VALUES (?,?,?,?,?)
+        """, [
+            record.get('code'),
+            record.get('name', ''),
+            record.get('industry', ''),
+            record.get('business', ''),
+            record.get('source', 'web'),
+        ])
+        db.commit()
+    finally:
+        db.close()
+
+
+def get_graph_data(code=None, type_filter=None):
+    """Build graph nodes+edges data for the frontend.
+
+    Args:
+        code: Optional stock code to filter by (shows relations for a specific stock)
+        type_filter: Optional relation type filter
+    Returns:
+        {nodes: [...], edges: [...]} compatible with G6
+    """
+    relations = get_company_relations(code=code, type_filter=type_filter)
+    if not relations:
+        return {'nodes': [], 'edges': []}
+
+    # Collect unique node ids
+    node_map = {}
+    edges = []
+
+    for r in relations:
+        # Edge
+        edge = {
+            'source': r['code'],
+            'target': r['related_code'],
+            'type': r['relation_type'],
+            'subtype': r['relation_subtype'],
+            'label': r['relation_detail'] or '',
+            'weight': r['weight'],
+            'detail': r['relation_detail'] or '',
+            'direction': r['direction'] or '',
+        }
+        edges.append(edge)
+
+        # Source node
+        if r['code'] not in node_map:
+            if r['code'].startswith('person_'):
+                ntype = 'person'
+                label = r['code'].replace('person_', '')
+            elif r['code'].startswith('holder_'):
+                ntype = 'company'
+                label = r['code'].replace('holder_', '')
+            else:
+                ntype = 'stock'
+                label = r.get('related_name', r['code'])
+            node_map[r['code']] = {
+                'id': r['code'],
+                'label': label,
+                'type': ntype,
+                'code': r['code'],
+            }
+
+        # Target node
+        if r['related_code'] not in node_map:
+            if r['related_code'].startswith('person_'):
+                ntype = 'person'
+                label = r['related_code'].replace('person_', '')
+            elif r['related_code'].startswith('holder_'):
+                ntype = 'company'
+                label = r['related_code'].replace('holder_', '')
+            else:
+                ntype = 'company'
+                label = r.get('related_name', r['related_code'])
+            node_map[r['related_code']] = {
+                'id': r['related_code'],
+                'label': label,
+                'type': ntype,
+                'code': r['related_code'],
+            }
+
+    # Enrich stock/company nodes with business info
+    stock_codes = [n['code'] for n in node_map.values()
+                   if n['type'] in ('stock', 'company') and not n['code'].startswith(('person_', 'holder_'))]
+    if stock_codes:
+        biz = get_company_business(stock_codes)
+        for n in node_map.values():
+            if n['code'] in biz:
+                n['industry'] = biz[n['code']].get('industry', '')
+                n['business'] = biz[n['code']].get('business', '')
+
+    return {'nodes': list(node_map.values()), 'edges': edges}

@@ -52,6 +52,11 @@ const routes = [
     component: () => import('@/pages/PatternRules.vue'),
   },
   {
+    path: '/company-graph',
+    name: 'company-graph',
+    component: () => import('@/pages/CompanyGraph.vue'),
+  },
+  {
     path: '/manage',
     name: 'manage',
     component: () => import('@/pages/Management.vue'),
